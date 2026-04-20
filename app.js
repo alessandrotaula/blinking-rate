@@ -834,8 +834,6 @@ function generateReport(session) {
   repTrend.textContent = trendLabel;
   reportDate.textContent = fmtDate(session.startedAt);
 
-  drawReportChart(session, rates, slope, intercept);
-
   const peakIdx   = rates.indexOf(maxRate);
   const valleyIdx = rates.indexOf(minRate);
   const peakMin   = ((samples[peakIdx].t - session.startedAt) / 60000).toFixed(1);
@@ -850,9 +848,10 @@ function generateReport(session) {
   ].join("");
 
   reportSection.hidden = false;
-  requestAnimationFrame(() =>
-    reportSection.scrollIntoView({ behavior: "smooth", block: "start" })
-  );
+  requestAnimationFrame(() => {
+    drawReportChart(session, rates, slope, intercept);
+    reportSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 function drawReportChart(session, rates, slope, intercept) {
