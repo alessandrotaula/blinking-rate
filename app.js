@@ -22,6 +22,8 @@ const FACE_BACK_MS = 500;
 const TICK_INTERVAL_MS = 40;
 const SESSIONS_KEY = "blinkSessions.v1";
 const MAX_STORED_SESSIONS = 20;
+const BASELINES_KEY = "blinkBaselines.v1";
+const COG_TICK_MS = 2000;
 
 const el = (id) => document.getElementById(id);
 const startBtn = el("startBtn");
@@ -77,6 +79,25 @@ const state = {
   faceBackFirstSeenAt: 0,
   pauseStartedAt: 0,
   totalPausedMs: 0,
+  // cognitive metrics
+  cogB_user: 15,
+  cogB_session: null,
+  cogB_session_ready: false,
+  cogB_session_samples: [],
+  cogLastTick: 0,
+  cogFD: 0,
+  cogCF: 0,
+  cogFD_conf: 0,
+  cogCF_conf: 0,
+  cogStateLabel: "idle",
+  lastResumedAt: 0,
+  activeSupprStart: null,
+  suppressionEps: [],
+  reboundBursts: [],
+  ibiMedian3m: null,
+  ibiCv3m: 0.55,
+  ibiP903m: 6,
+  rateSlopeSession: 0,
 };
 
 function setStatus(msg, isErr = false) {
@@ -183,6 +204,8 @@ function processFrame() {
         state.paused = false;
         state.faceBackFirstSeenAt = 0;
         state.eyesClosed = false;
+        state.lastResumedAt = nowEpoch;
+        state.activeSupprStart = null;
         setStatus("Ripreso — volto rilevato.");
         setPulse("live", "Live");
       } else {
@@ -287,6 +310,13 @@ function updateUI() {
   sessionVal.textContent = fmtTime(activeMs) + (state.paused ? " · in pausa" : "");
   drawChart();
   drawPipCanvas(rate5m);
+
+  // throttled cognitive update
+  const now2 = Date.now();
+  if (now2 - state.cogLastTick >= COG_TICK_MS) {
+    state.cogLastTick = now2;
+    updateCognitiveMetrics();
+  }
 }
 
 function drawChart() {
@@ -653,6 +683,25 @@ async function start() {
   state.faceBackFirstSeenAt = 0;
   state.pauseStartedAt = 0;
   state.totalPausedMs = 0;
+  // reset cognitive state
+  state.cogB_session = null;
+  state.cogB_session_ready = false;
+  state.cogB_session_samples = [];
+  state.cogLastTick = 0;
+  state.cogFD = 0;
+  state.cogCF = 0;
+  state.cogFD_conf = 0;
+  state.cogCF_conf = 0;
+  state.cogStateLabel = "calib";
+  state.lastResumedAt = 0;
+  state.activeSupprStart = null;
+  state.suppressionEps = [];
+  state.reboundBursts = [];
+  state.rateSlopeSession = 0;
+  // load persisted user baseline
+  const bl = loadUserBaseline();
+  if (bl) { state.cogB_user = bl.B_user; }
+  resetCognitiveUI();
 
   startKeepAlive();
   state.tickWorker = makeTickWorker();
@@ -679,6 +728,15 @@ function stop() {
   state.sampleTimer = state.uiTimer = null;
   stopKeepAlive();
   const saved = persistCurrentSession();
+  // update multi-session baseline
+  if (state.rateHistory.length >= 10) {
+    const rates = state.rateHistory.map(p => p.v).sort((a, b) => a - b);
+    const sessionMedian = rates[Math.floor(rates.length / 2)];
+    const bl = loadUserBaseline() || { B_user: 15, sessions: 0 };
+    bl.B_user = Math.round((0.7 * bl.B_user + 0.3 * sessionMedian) * 100) / 100;
+    bl.sessions = (bl.sessions || 0) + 1;
+    saveUserBaseline(bl);
+  }
   stopCamera();
   if (saved) {
     downloadSession(saved);
@@ -691,6 +749,7 @@ function stop() {
   stopBtn.disabled = true;
   pipBtn.disabled = true;
   setPulse("idle", "In attesa");
+  resetCognitiveUI();
   renderSessions();
 }
 
@@ -703,6 +762,8 @@ autoPauseChk.addEventListener("change", () => {
     state.paused = false;
     state.faceBackFirstSeenAt = 0;
     state.eyesClosed = false;
+    state.lastResumedAt = Date.now();
+    state.activeSupprStart = null;
     setStatus("Auto-pausa disattivata — ripreso.");
     setPulse("live", "Live");
   }
@@ -965,3 +1026,277 @@ function buildEyeHealthCard(avg, sd) {
         `per ridurre lo sforzo accomodativo.`);
 }
 
+/* ── Cognitive metrics ── */
+
+function loadUserBaseline() {
+  try { return JSON.parse(localStorage.getItem(BASELINES_KEY)); } catch { return null; }
+}
+function saveUserBaseline(data) {
+  try { localStorage.setItem(BASELINES_KEY, JSON.stringify(data)); } catch {}
+}
+
+function cogEffectiveBaseline() {
+  if (state.cogB_session_ready && state.cogB_user) {
+    return 0.35 * state.cogB_session + 0.65 * state.cogB_user;
+  }
+  return state.cogB_session_ready ? state.cogB_session : (state.cogB_user || 15);
+}
+
+function computeIBIFeatures() {
+  const now = Date.now();
+  const t3m = now - 3 * 60000;
+  const recent = state.blinkTimes.filter(t => t >= t3m);
+  if (recent.length < 3) return { median: null, cv: 0.55, p90: 6, count: recent.length };
+
+  const ibis = [];
+  for (let i = 1; i < recent.length; i++) ibis.push((recent[i] - recent[i - 1]) / 1000);
+  if (state.blinkTimes.length > 0) {
+    ibis.push((now - state.blinkTimes[state.blinkTimes.length - 1]) / 1000);
+  }
+  ibis.sort((a, b) => a - b);
+  const mean = ibis.reduce((a, b) => a + b, 0) / ibis.length;
+  const sd = Math.sqrt(ibis.reduce((a, b) => a + (b - mean) ** 2, 0) / ibis.length);
+  const mid = Math.floor(ibis.length / 2);
+  const median = ibis.length % 2 === 0 ? (ibis[mid - 1] + ibis[mid]) / 2 : ibis[mid];
+  const p90 = ibis[Math.min(Math.floor(0.9 * ibis.length), ibis.length - 1)];
+  return { median, cv: mean > 0 ? sd / mean : 0.55, p90, count: recent.length };
+}
+
+function detectSuppressionBursts() {
+  const now = Date.now();
+  const Beff = cogEffectiveBaseline();
+  const ibiMed = state.ibiMedian3m || (Beff > 0 ? 60 / Beff : 4);
+  const T_supp_ms = Math.max(12000, 3 * ibiMed * 1000);
+
+  const hasFace = (now - state.lastFaceSeenAt) < 2500;
+  const n = state.blinkTimes.length;
+  const sinceLastMs = n > 0 ? now - state.blinkTimes[n - 1] : Infinity;
+
+  if (!state.paused && hasFace) {
+    if (sinceLastMs >= T_supp_ms) {
+      if (state.activeSupprStart === null) {
+        state.activeSupprStart = n > 0
+          ? state.blinkTimes[n - 1]
+          : now - sinceLastMs;
+      }
+    } else if (state.activeSupprStart !== null) {
+      const lastBlink = state.blinkTimes[n - 1];
+      const dur_s = (lastBlink - state.activeSupprStart) / 1000;
+      if (dur_s >= T_supp_ms / 1000) {
+        state.suppressionEps.push({ t_start: state.activeSupprStart, t_end: lastBlink, dur_s });
+        detectReboundBurst(lastBlink);
+      }
+      state.activeSupprStart = null;
+    }
+  } else {
+    state.activeSupprStart = null;
+  }
+
+  const cut5m = now - 5 * 60000;
+  state.suppressionEps = state.suppressionEps.filter(e => e.t_end > cut5m);
+  state.reboundBursts   = state.reboundBursts.filter(b => b.t > cut5m);
+}
+
+function detectReboundBurst(t_start) {
+  const t_end = t_start + 5000;
+  const burst = state.blinkTimes.filter(t => t >= t_start && t <= t_end);
+  if (burst.length < 3) return;
+  let ok = true;
+  for (let i = 1; i < burst.length; i++) if ((burst[i] - burst[i - 1]) / 1000 > 0.6) { ok = false; break; }
+  if (ok) state.reboundBursts.push({ t: t_start, size: burst.length });
+}
+
+function computeRateSlope() {
+  if (state.rateHistory.length < 6) return 0;
+  const pts = state.rateHistory;
+  const n = pts.length;
+  const t0 = pts[0].t;
+  const xs = pts.map(p => (p.t - t0) / 60000);
+  const ys = pts.map(p => p.v);
+  const sx = xs.reduce((a, b) => a + b, 0);
+  const sy = ys.reduce((a, b) => a + b, 0);
+  const sxy = xs.reduce((a, x, i) => a + x * ys[i], 0);
+  const sx2 = xs.reduce((a, x) => a + x * x, 0);
+  const d = n * sx2 - sx * sx;
+  return d === 0 ? 0 : (n * sxy - sx * sy) / d;
+}
+
+function computeVarianceRatio() {
+  const n = state.rateHistory.length;
+  if (n < 12) return 1;
+  const mid1 = Math.floor(n / 3), mid2 = Math.floor(2 * n / 3);
+  const varOf = arr => {
+    if (arr.length < 2) return 0;
+    const m = arr.reduce((a, b) => a + b, 0) / arr.length;
+    return arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length;
+  };
+  const vMid  = varOf(state.rateHistory.slice(mid1, mid2).map(p => p.v));
+  const vLate = varOf(state.rateHistory.slice(mid2).map(p => p.v));
+  return vMid > 0 ? vLate / vMid : 1;
+}
+
+function computeFocusDepth(elapsed_s) {
+  const Beff = cogEffectiveBaseline();
+  const rate60 = state.rateHistory.length ? state.rateHistory[state.rateHistory.length - 1].v : 0;
+  const cv   = state.ibiCv3m;
+  const p90  = state.ibiP903m;
+  const reboundDensity = state.reboundBursts.length / 5;
+
+  const s_supp      = Math.min(1, Math.max(0, (1 - rate60 / Math.max(Beff, 1)) / 0.50));
+  const s_p90       = Math.min(1, Math.max(0, (p90 - 6) / 14));
+  const s_coherence = 1 - Math.min(1, Math.abs(cv - 0.55) / 0.60);
+  const p_rebound   = Math.min(1, reboundDensity / 0.6);
+  const p_unstable  = Math.min(1, Math.max(0, (cv - 1.2) / 0.8));
+
+  const fd_raw = Math.max(0, Math.min(1,
+    0.55 * s_supp + 0.20 * s_p90 + 0.25 * s_coherence - 0.25 * p_rebound - 0.15 * p_unstable));
+
+  const alpha = 0.15;
+  state.cogFD = alpha * fd_raw + (1 - alpha) * state.cogFD;
+
+  const warmup = elapsed_s < 60 ? 0 : Math.min(1, (elapsed_s - 60) / 120);
+  const density = Math.min(1, (state.ibiMedian3m ? 5 : 0) / 5 +
+    state.blinkTimes.filter(t => Date.now() - t < 3 * 60000).length / 5);
+  state.cogFD_conf = warmup * Math.min(1, density);
+}
+
+function computeCognitiveFatigue(elapsed_s) {
+  if (elapsed_s < 180) { state.cogCF = state.cogCF * 0.98; return; }
+
+  const Beff = cogEffectiveBaseline();
+  const slope = state.rateSlopeSession;
+  const vr = computeVarianceRatio();
+  const reboundDensity = state.reboundBursts.length / 5;
+
+  const now = Date.now();
+  const t5m = now - 5 * 60000;
+  const r5vals = state.rateHistory.filter(p => p.t >= t5m).map(p => p.v);
+  const rate5m = r5vals.length ? r5vals.reduce((a, b) => a + b, 0) / r5vals.length : 0;
+  const driftRatio = (rate5m - Beff) / Math.max(Beff, 1);
+
+  const s_drift     = Math.min(1, Math.max(0, slope / (0.05 * Math.max(Beff, 1))));
+  const s_variance  = Math.min(1, Math.max(0, (vr - 1.0) / 1.5));
+  const s_rebound   = Math.min(1, reboundDensity / 0.8);
+  const s_elevation = Math.min(1, Math.max(0, driftRatio / 0.40));
+
+  const cf_raw = Math.max(0, Math.min(1,
+    0.35 * s_drift + 0.20 * s_variance + 0.25 * s_rebound + 0.20 * s_elevation));
+
+  const alpha = 0.05;
+  state.cogCF = alpha * cf_raw + (1 - alpha) * state.cogCF;
+
+  const warmupCF = Math.min(1, (elapsed_s - 180) / 120);
+  state.cogCF_conf = state.cogFD_conf * warmupCF;
+}
+
+const STATE_LABELS = {
+  deep:       "Focus profondo",
+  stable:     "Focus stabile",
+  drifting:   "Drifting",
+  fatigue:    "Affaticamento",
+  rebound:    "Rebound",
+  disengaged: "Disimpegnato",
+  calib:      "Calibrazione…",
+  idle:       "In attesa",
+};
+
+function classifyState(fd, cf, elapsed_s) {
+  if (elapsed_s < 60) return "calib";
+  const justResumed = state.lastResumedAt > 0 && Date.now() - state.lastResumedAt < 60000;
+  const reboundNow = state.reboundBursts.length > 0 &&
+    Date.now() - state.reboundBursts[state.reboundBursts.length - 1].t < 15000;
+  if (justResumed || (reboundNow && cf >= 40)) return "rebound";
+  if (cf >= 60) return "fatigue";
+  if (fd >= 70 && cf < 40) return "deep";
+  if (fd >= 50 && cf < 50) return "stable";
+  if (fd < 35 && cf < 40)  return "disengaged";
+  return "drifting";
+}
+
+function updateCognitiveMetrics() {
+  if (!state.startedAt) return;
+  const elapsed_s = (Date.now() - state.startedAt) / 1000;
+
+  // collect B_session samples (min 1–3)
+  if (!state.cogB_session_ready && elapsed_s >= 60 && elapsed_s <= 180 &&
+      state.rateHistory.length) {
+    state.cogB_session_samples.push(state.rateHistory[state.rateHistory.length - 1].v);
+  }
+  if (!state.cogB_session_ready && elapsed_s > 180 && state.cogB_session_samples.length >= 3) {
+    const s = [...state.cogB_session_samples].sort((a, b) => a - b);
+    state.cogB_session = s[Math.floor(s.length / 2)];
+    state.cogB_session_ready = true;
+  }
+
+  const ibi = computeIBIFeatures();
+  state.ibiMedian3m = ibi.median;
+  state.ibiCv3m     = ibi.cv;
+  state.ibiP903m    = ibi.p90;
+
+  detectSuppressionBursts();
+  state.rateSlopeSession = computeRateSlope();
+
+  computeFocusDepth(elapsed_s);
+  computeCognitiveFatigue(elapsed_s);
+
+  const fd = Math.round(state.cogFD * 100);
+  const cf = Math.round(state.cogCF * 100);
+  state.cogStateLabel = classifyState(fd, cf, elapsed_s);
+
+  renderCognitiveUI(fd, cf, elapsed_s);
+}
+
+function renderCognitiveUI(fd, cf, elapsed_s) {
+  const fdEl  = document.getElementById("fdVal");
+  const cfEl  = document.getElementById("cfVal");
+  const fdBar = document.getElementById("fdBar");
+  const cfBar = document.getElementById("cfBar");
+  const fdConf= document.getElementById("fdConf");
+  const cfConf= document.getElementById("cfConf");
+  const stEl  = document.getElementById("stateLabel");
+  if (!fdEl) return;
+
+  const calibrating = !state.cogB_session_ready;
+  const fdLow = state.cogFD_conf < 0.35;
+  const cfLow = state.cogCF_conf < 0.35;
+
+  if (calibrating || fdLow) {
+    fdEl.textContent = "—";
+    fdBar.style.width = "0%";
+    fdConf.textContent = calibrating ? "calibrazione in corso…" : "dati insufficienti";
+  } else {
+    fdEl.textContent = String(fd);
+    fdBar.style.width = fd + "%";
+    fdConf.textContent = `baseline ${cogEffectiveBaseline().toFixed(1)}/min`;
+  }
+
+  if (calibrating || cfLow) {
+    cfEl.textContent = "—";
+    cfBar.style.width = "0%";
+    cfConf.textContent = calibrating ? "calibrazione in corso…" : elapsed_s < 180 ? "disponibile dopo 3 min" : "dati insufficienti";
+  } else {
+    cfEl.textContent = String(cf);
+    cfBar.style.width = cf + "%";
+    cfConf.textContent = `drift: ${state.rateSlopeSession >= 0 ? "+" : ""}${state.rateSlopeSession.toFixed(2)}/min·min`;
+  }
+
+  if (stEl) {
+    const key = state.cogStateLabel;
+    stEl.textContent = STATE_LABELS[key] || key;
+    stEl.className = "state-badge state-" + key;
+  }
+}
+
+function resetCognitiveUI() {
+  const ids = ["fdVal", "cfVal", "fdConf", "cfConf"];
+  ids.forEach(id => {
+    const el2 = document.getElementById(id);
+    if (el2) el2.textContent = id.endsWith("Val") ? "—" : "in attesa";
+  });
+  ["fdBar", "cfBar"].forEach(id => {
+    const el2 = document.getElementById(id);
+    if (el2) el2.style.width = "0%";
+  });
+  const stEl = document.getElementById("stateLabel");
+  if (stEl) { stEl.textContent = "In attesa"; stEl.className = "state-badge state-idle"; }
+}
