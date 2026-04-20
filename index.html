@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blink Rate Tracker</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Blink Rate Tracker</h1>
+      <p class="sub">Frequenza di ammiccamento in tempo reale dalla webcam.</p>
+    </header>
+
+    <section class="controls">
+      <button id="startBtn" type="button">Avvia</button>
+      <button id="stopBtn" type="button" disabled>Ferma</button>
+      <button id="pipBtn" type="button" disabled>Picture-in-Picture</button>
+      <button id="wakeBtn" type="button" aria-pressed="false">Tieni schermo attivo</button>
+      <label class="preview-toggle">
+        <input type="checkbox" id="previewChk" />
+        Mostra video
+      </label>
+    </section>
+
+    <section class="stats">
+      <div class="stat">
+        <div class="label">Blink rate</div>
+        <div class="value"><span id="rateVal">0.0</span><span class="unit">/min</span></div>
+        <div class="hint">finestra scorrevole 60 s</div>
+      </div>
+      <div class="stat">
+        <div class="label">Variazione</div>
+        <div class="value"><span id="varVal">0.0</span><span class="unit">σ</span></div>
+        <div class="hint">dev. std. del rate (ultimi 15 s)</div>
+      </div>
+      <div class="stat">
+        <div class="label">Totale blink</div>
+        <div class="value"><span id="totalVal">0</span></div>
+        <div class="hint">dall'avvio della sessione</div>
+      </div>
+      <div class="stat">
+        <div class="label">Sessione</div>
+        <div class="value"><span id="sessionVal">00:00</span></div>
+        <div class="hint">durata monitoraggio</div>
+      </div>
+    </section>
+
+    <section class="chart-wrap">
+      <canvas id="chart" width="1000" height="280" aria-label="Grafico del blink rate"></canvas>
+      <div class="legend">
+        <span class="sw sw-rate"></span> blink rate (/min)
+        <span class="sw sw-var"></span> variazione (σ)
+      </div>
+    </section>
+
+    <section class="video-wrap" id="videoWrap" hidden>
+      <video id="video" playsinline muted></video>
+      <canvas id="pipCanvas" width="640" height="360"></canvas>
+    </section>
+
+    <p id="status" class="status" role="status" aria-live="polite">Pronto.</p>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
