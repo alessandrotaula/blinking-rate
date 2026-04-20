@@ -125,3 +125,54 @@ header .sub {
   min-height: 1.2em;
 }
 .status.err { color: #fca5a5; }
+
+.sessions-wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+.sessions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.sessions-header h2 { margin: 0; font-size: 16px; letter-spacing: -0.01em; }
+.sessions-actions { display: flex; gap: 8px; }
+.sessions-actions button,
+.session-actions button {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.sessions-actions button:hover,
+.session-actions button:hover { border-color: var(--accent); }
+button.danger { color: #fca5a5; }
+button.danger:hover { border-color: #fca5a5; }
+
+.session-list { display: flex; flex-direction: column; gap: 6px; }
+.session-list .empty { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.session-info .s-date { font-weight: 600; }
+.session-info .s-meta { color: var(--muted); font-size: 13px; }
+.session-actions { display: flex; gap: 6px; }
+
+.hint-muted { color: var(--muted); font-size: 12px; margin: 8px 0 0; }

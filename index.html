@@ -24,6 +24,11 @@
       </label>
     </section>
 
+    <section class="video-wrap" id="videoWrap" hidden>
+      <video id="video" playsinline muted></video>
+      <canvas id="pipCanvas" width="520" height="420"></canvas>
+    </section>
+
     <section class="stats">
       <div class="stat">
         <div class="label">Blink rate</div>
@@ -55,9 +60,19 @@
       </div>
     </section>
 
-    <section class="video-wrap" id="videoWrap" hidden>
-      <video id="video" playsinline muted></video>
-      <canvas id="pipCanvas" width="640" height="360"></canvas>
+    <section class="sessions-wrap">
+      <div class="sessions-header">
+        <h2>Sessioni salvate</h2>
+        <div class="sessions-actions">
+          <button id="exportBtn" type="button">Scarica riepilogo CSV</button>
+          <button id="clearBtn" type="button" class="danger">Cancella tutte</button>
+        </div>
+      </div>
+      <div id="sessionList" class="session-list"></div>
+      <p class="hint-muted">
+        Le sessioni sono conservate in localStorage del browser. Il CSV della
+        sessione viene scaricato automaticamente alla pressione di "Ferma".
+      </p>
     </section>
 
     <p id="status" class="status" role="status" aria-live="polite">Pronto.</p>

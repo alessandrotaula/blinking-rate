@@ -15,12 +15,17 @@ const RATE_WINDOW_MS = 60_000;
 const SAMPLE_INTERVAL_MS = 500;
 const VAR_WINDOW_SAMPLES = 30;
 const CHART_WINDOW_MS = 120_000;
+const TICK_INTERVAL_MS = 40;
+const SESSIONS_KEY = "blinkSessions.v1";
+const MAX_STORED_SESSIONS = 20;
 
 const el = (id) => document.getElementById(id);
 const startBtn = el("startBtn");
 const stopBtn = el("stopBtn");
 const pipBtn = el("pipBtn");
 const wakeBtn = el("wakeBtn");
+const exportBtn = el("exportBtn");
+const clearBtn = el("clearBtn");
 const previewChk = el("previewChk");
 const videoWrap = el("videoWrap");
 const video = el("video");
@@ -31,11 +36,12 @@ const varVal = el("varVal");
 const totalVal = el("totalVal");
 const sessionVal = el("sessionVal");
 const statusEl = el("status");
+const sessionList = el("sessionList");
 
 const state = {
   landmarker: null,
   stream: null,
-  rafId: null,
+  tickWorker: null,
   sampleTimer: null,
   uiTimer: null,
   eyesClosed: false,
@@ -46,6 +52,10 @@ const state = {
   startedAt: 0,
   wakeLock: null,
   pipStream: null,
+  pipVideo: null,
+  audioCtx: null,
+  audioOsc: null,
+  totalBlinks: 0,
 };
 
 function setStatus(msg, isErr = false) {
@@ -82,29 +92,64 @@ function stopCamera() {
   video.srcObject = null;
 }
 
-function detectLoop() {
-  if (!state.landmarker || !state.stream) return;
-  if (video.readyState >= 2) {
-    const res = state.landmarker.detectForVideo(video, performance.now());
-    const bs = res?.faceBlendshapes?.[0]?.categories;
-    if (bs) {
-      const left = bs.find((c) => c.categoryName === "eyeBlinkLeft")?.score ?? 0;
-      const right = bs.find((c) => c.categoryName === "eyeBlinkRight")?.score ?? 0;
-      const score = (left + right) / 2;
-      const now = performance.now();
-      if (!state.eyesClosed && score > BLINK_HIGH) {
-        state.eyesClosed = true;
-      } else if (state.eyesClosed && score < BLINK_LOW) {
-        state.eyesClosed = false;
-        if (now - state.lastBlinkAt > MIN_BLINK_GAP_MS) {
-          state.lastBlinkAt = now;
-          state.blinkTimes.push(Date.now());
-          totalBlinkCount++;
-        }
+function startKeepAlive() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    state.audioCtx = new Ctx();
+    const osc = state.audioCtx.createOscillator();
+    const gain = state.audioCtx.createGain();
+    gain.gain.value = 0.0001;
+    osc.connect(gain);
+    gain.connect(state.audioCtx.destination);
+    osc.start();
+    state.audioOsc = osc;
+  } catch {}
+}
+
+function stopKeepAlive() {
+  try { state.audioOsc?.stop(); } catch {}
+  try { state.audioCtx?.close(); } catch {}
+  state.audioOsc = null;
+  state.audioCtx = null;
+}
+
+function makeTickWorker() {
+  const src = `
+    let id = null;
+    onmessage = (e) => {
+      if (e.data && e.data.type === 'start') {
+        clearInterval(id);
+        id = setInterval(() => postMessage(0), e.data.interval || 40);
+      } else if (e.data && e.data.type === 'stop') {
+        clearInterval(id); id = null;
       }
+    };
+  `;
+  const blob = new Blob([src], { type: "application/javascript" });
+  return new Worker(URL.createObjectURL(blob));
+}
+
+function processFrame() {
+  if (!state.landmarker || !state.stream) return;
+  if (video.readyState < 2) return;
+  const res = state.landmarker.detectForVideo(video, performance.now());
+  const bs = res?.faceBlendshapes?.[0]?.categories;
+  if (!bs) return;
+  const left = bs.find((c) => c.categoryName === "eyeBlinkLeft")?.score ?? 0;
+  const right = bs.find((c) => c.categoryName === "eyeBlinkRight")?.score ?? 0;
+  const score = (left + right) / 2;
+  const now = performance.now();
+  if (!state.eyesClosed && score > BLINK_HIGH) {
+    state.eyesClosed = true;
+  } else if (state.eyesClosed && score < BLINK_LOW) {
+    state.eyesClosed = false;
+    if (now - state.lastBlinkAt > MIN_BLINK_GAP_MS) {
+      state.lastBlinkAt = now;
+      state.blinkTimes.push(Date.now());
+      state.totalBlinks++;
     }
   }
-  state.rafId = requestAnimationFrame(detectLoop);
 }
 
 function sample() {
@@ -117,13 +162,9 @@ function sample() {
     : 0;
 
   state.rateHistory.push({ t: now, v: rate });
-  const chartCutoff = now - CHART_WINDOW_MS;
-  while (state.rateHistory.length && state.rateHistory[0].t < chartCutoff) state.rateHistory.shift();
-
   const recent = state.rateHistory.slice(-VAR_WINDOW_SAMPLES).map((p) => p.v);
   const variation = stddev(recent);
   state.varHistory.push({ t: now, v: variation });
-  while (state.varHistory.length && state.varHistory[0].t < chartCutoff) state.varHistory.shift();
 }
 
 function stddev(arr) {
@@ -134,10 +175,15 @@ function stddev(arr) {
 }
 
 function fmtTime(ms) {
-  const s = Math.floor(ms / 1000);
+  const s = Math.max(0, Math.floor(ms / 1000));
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
   return `${mm}:${ss}`;
+}
+
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleString();
 }
 
 function updateUI() {
@@ -145,13 +191,11 @@ function updateUI() {
   const lastVar = state.varHistory.at(-1)?.v ?? 0;
   rateVal.textContent = last.toFixed(1);
   varVal.textContent = lastVar.toFixed(2);
-  totalVal.textContent = String(totalBlinkCount);
+  totalVal.textContent = String(state.totalBlinks);
   sessionVal.textContent = fmtTime(Date.now() - state.startedAt);
   drawChart();
-  drawPipCanvas(last, lastVar);
+  drawPipCanvas(last);
 }
-
-let totalBlinkCount = 0;
 
 function drawChart() {
   const dpr = window.devicePixelRatio || 1;
@@ -176,9 +220,9 @@ function drawChart() {
   ctx.stroke();
 
   const now = Date.now();
-  const tMin = now - CHART_WINDOW_MS;
-  const rates = state.rateHistory;
-  const vars = state.varHistory;
+  const cutoff = now - CHART_WINDOW_MS;
+  const rates = state.rateHistory.filter((p) => p.t >= cutoff);
+  const vars = state.varHistory.filter((p) => p.t >= cutoff);
 
   const rateMaxData = Math.max(20, ...rates.map((p) => p.v));
   const rateMax = Math.ceil(rateMaxData / 5) * 5;
@@ -233,43 +277,42 @@ function drawChart() {
   }
 }
 
-function drawPipCanvas(rate, variation) {
+function drawPipCanvas(rate) {
   const ctx = pipCanvas.getContext("2d");
   const W = pipCanvas.width, H = pipCanvas.height;
   ctx.fillStyle = "#0b0d12";
   ctx.fillRect(0, 0, W, H);
 
   ctx.fillStyle = "#8a93a6";
-  ctx.font = "18px system-ui, sans-serif";
-  ctx.textAlign = "left";
+  ctx.font = "20px system-ui, sans-serif";
+  ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  ctx.fillText("Blink rate", 24, 24);
-  ctx.fillText("Variazione", W / 2 + 12, 24);
+  ctx.fillText("Blink rate", W / 2, 18);
 
   ctx.fillStyle = "#e8ecf4";
-  ctx.font = "bold 78px system-ui, sans-serif";
-  ctx.fillText(rate.toFixed(1), 24, 48);
-  ctx.fillText(variation.toFixed(2), W / 2 + 12, 48);
+  ctx.font = "bold 120px system-ui, sans-serif";
+  ctx.fillText(rate.toFixed(1), W / 2, 50);
 
   ctx.fillStyle = "#8a93a6";
-  ctx.font = "16px system-ui, sans-serif";
-  ctx.fillText("blink / min", 24, 140);
-  ctx.fillText("σ (15 s)", W / 2 + 12, 140);
+  ctx.font = "18px system-ui, sans-serif";
+  ctx.fillText("blink / min", W / 2, 190);
 
-  const pad = 24;
-  const top = 190;
+  const pad = 30;
+  const top = 230;
   const h = H - top - 20;
   const w = W - 2 * pad;
   ctx.strokeStyle = "#252b3a";
   ctx.strokeRect(pad, top, w, h);
 
   const now = Date.now();
-  const rateMax = Math.max(20, ...state.rateHistory.map((p) => p.v));
-  if (state.rateHistory.length > 1) {
+  const cutoff = now - CHART_WINDOW_MS;
+  const pts = state.rateHistory.filter((p) => p.t >= cutoff);
+  const rateMax = Math.max(20, ...pts.map((p) => p.v));
+  if (pts.length > 1) {
     ctx.strokeStyle = "#60a5fa";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    state.rateHistory.forEach((p, i) => {
+    pts.forEach((p, i) => {
       const x = pad + w * (1 - (now - p.t) / CHART_WINDOW_MS);
       const y = top + h * (1 - Math.min(p.v, rateMax) / rateMax);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
@@ -318,8 +361,165 @@ async function togglePip() {
     pipVideo.addEventListener("leavepictureinpicture", () => {
       pipVideo.srcObject = null;
     });
+    state.pipVideo = pipVideo;
   } catch (e) {
     setStatus("Picture-in-Picture non disponibile: " + e.message, true);
+  }
+}
+
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(SESSIONS_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions(list) {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
+  } catch (e) {
+    setStatus("Impossibile salvare in localStorage: " + e.message, true);
+  }
+}
+
+function persistCurrentSession() {
+  if (!state.startedAt || state.rateHistory.length === 0) return null;
+  const endedAt = Date.now();
+  const rates = state.rateHistory.map((p) => p.v);
+  const avg = rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+  const session = {
+    id: "s_" + state.startedAt,
+    startedAt: state.startedAt,
+    endedAt,
+    durationMs: endedAt - state.startedAt,
+    totalBlinks: state.totalBlinks,
+    avgRate: avg,
+    samples: state.rateHistory.map((p, i) => ({
+      t: p.t,
+      rate: p.v,
+      variation: state.varHistory[i]?.v ?? 0,
+    })),
+    blinkTimes: state.blinkTimes.slice(),
+  };
+  const sessions = loadSessions();
+  sessions.unshift(session);
+  while (sessions.length > MAX_STORED_SESSIONS) sessions.pop();
+  saveSessions(sessions);
+  return session;
+}
+
+function sessionToCSV(s) {
+  const lines = [];
+  lines.push(`# session_id,${s.id}`);
+  lines.push(`# started_at,${new Date(s.startedAt).toISOString()}`);
+  lines.push(`# ended_at,${new Date(s.endedAt).toISOString()}`);
+  lines.push(`# duration_seconds,${(s.durationMs / 1000).toFixed(1)}`);
+  lines.push(`# total_blinks,${s.totalBlinks}`);
+  lines.push(`# avg_rate_per_min,${s.avgRate.toFixed(3)}`);
+  lines.push("timestamp_iso,epoch_ms,rate_per_min,variation_sigma");
+  for (const p of s.samples) {
+    lines.push(`${new Date(p.t).toISOString()},${p.t},${p.rate.toFixed(3)},${p.variation.toFixed(3)}`);
+  }
+  return lines.join("\n");
+}
+
+function downloadText(filename, text, mime = "text/csv") {
+  const blob = new Blob([text], { type: mime + ";charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function sessionFilename(s) {
+  const d = new Date(s.startedAt);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `blink-session-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.csv`;
+}
+
+function downloadSession(s) {
+  downloadText(sessionFilename(s), sessionToCSV(s));
+}
+
+function exportAllSessions() {
+  const sessions = loadSessions();
+  if (!sessions.length) {
+    setStatus("Nessuna sessione salvata.", true);
+    return;
+  }
+  const lines = [
+    "session_id,started_at,ended_at,duration_seconds,total_blinks,avg_rate_per_min",
+  ];
+  for (const s of sessions) {
+    lines.push([
+      s.id,
+      new Date(s.startedAt).toISOString(),
+      new Date(s.endedAt).toISOString(),
+      (s.durationMs / 1000).toFixed(1),
+      s.totalBlinks,
+      s.avgRate.toFixed(3),
+    ].join(","));
+  }
+  downloadText("blink-sessions-summary.csv", lines.join("\n"));
+}
+
+function deleteSession(id) {
+  const list = loadSessions().filter((s) => s.id !== id);
+  saveSessions(list);
+  renderSessions();
+}
+
+function clearAllSessions() {
+  if (!confirm("Cancellare tutte le sessioni salvate?")) return;
+  localStorage.removeItem(SESSIONS_KEY);
+  renderSessions();
+}
+
+function renderSessions() {
+  const sessions = loadSessions();
+  sessionList.innerHTML = "";
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "Nessuna sessione registrata.";
+    sessionList.appendChild(empty);
+    return;
+  }
+  for (const s of sessions) {
+    const row = document.createElement("div");
+    row.className = "session-row";
+    const info = document.createElement("div");
+    info.className = "session-info";
+    info.innerHTML = `
+      <div class="s-date">${fmtDate(s.startedAt)}</div>
+      <div class="s-meta">
+        durata ${fmtTime(s.durationMs)} ·
+        ${s.totalBlinks} blink ·
+        media ${s.avgRate.toFixed(1)}/min
+      </div>
+    `;
+    const actions = document.createElement("div");
+    actions.className = "session-actions";
+    const dl = document.createElement("button");
+    dl.textContent = "CSV";
+    dl.addEventListener("click", () => downloadSession(s));
+    const del = document.createElement("button");
+    del.textContent = "Elimina";
+    del.className = "danger";
+    del.addEventListener("click", () => deleteSession(s.id));
+    actions.appendChild(dl);
+    actions.appendChild(del);
+    row.appendChild(info);
+    row.appendChild(actions);
+    sessionList.appendChild(row);
   }
 }
 
@@ -337,25 +537,45 @@ async function start() {
   state.blinkTimes = [];
   state.rateHistory = [];
   state.varHistory = [];
-  totalBlinkCount = 0;
-  state.rafId = requestAnimationFrame(detectLoop);
+  state.totalBlinks = 0;
+  state.eyesClosed = false;
+  state.lastBlinkAt = 0;
+
+  startKeepAlive();
+  state.tickWorker = makeTickWorker();
+  state.tickWorker.onmessage = () => processFrame();
+  state.tickWorker.postMessage({ type: "start", interval: TICK_INTERVAL_MS });
+
   state.sampleTimer = setInterval(sample, SAMPLE_INTERVAL_MS);
   state.uiTimer = setInterval(updateUI, 250);
+
   stopBtn.disabled = false;
   pipBtn.disabled = !("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled;
-  setStatus("In esecuzione — guarda la webcam normalmente.");
+  setStatus("In esecuzione — la detection continua anche cambiando tab.");
 }
 
 function stop() {
-  if (state.rafId) cancelAnimationFrame(state.rafId);
+  if (state.tickWorker) {
+    try { state.tickWorker.postMessage({ type: "stop" }); } catch {}
+    state.tickWorker.terminate();
+    state.tickWorker = null;
+  }
   if (state.sampleTimer) clearInterval(state.sampleTimer);
   if (state.uiTimer) clearInterval(state.uiTimer);
-  state.rafId = state.sampleTimer = state.uiTimer = null;
+  state.sampleTimer = state.uiTimer = null;
+  stopKeepAlive();
+  const saved = persistCurrentSession();
   stopCamera();
+  if (saved) {
+    downloadSession(saved);
+    setStatus(`Sessione salvata (${saved.totalBlinks} blink in ${fmtTime(saved.durationMs)}). CSV scaricato.`);
+  } else {
+    setStatus("Fermato.");
+  }
   startBtn.disabled = false;
   stopBtn.disabled = true;
   pipBtn.disabled = true;
-  setStatus("Fermato.");
+  renderSessions();
 }
 
 previewChk.addEventListener("change", () => {
@@ -365,9 +585,19 @@ startBtn.addEventListener("click", start);
 stopBtn.addEventListener("click", stop);
 pipBtn.addEventListener("click", togglePip);
 wakeBtn.addEventListener("click", toggleWakeLock);
+exportBtn.addEventListener("click", exportAllSessions);
+clearBtn.addEventListener("click", clearAllSessions);
 
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && state.wakeLock === null && wakeBtn.getAttribute("aria-pressed") === "true") {
     try { state.wakeLock = await navigator.wakeLock.request("screen"); } catch {}
   }
 });
+
+window.addEventListener("beforeunload", () => {
+  if (state.startedAt && state.rateHistory.length > 0 && state.tickWorker) {
+    persistCurrentSession();
+  }
+});
+
+renderSessions();
