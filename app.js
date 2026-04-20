@@ -43,6 +43,8 @@ const totalVal = el("totalVal");
 const sessionVal = el("sessionVal");
 const statusEl = el("status");
 const sessionList = el("sessionList");
+const pulseEl = el("pulse");
+const pulseLabelEl = el("pulseLabel");
 
 const state = {
   landmarker: null,
@@ -70,8 +72,22 @@ const state = {
 };
 
 function setStatus(msg, isErr = false) {
-  statusEl.textContent = msg;
+  const textSpan = statusEl.querySelector("span:last-child");
+  const pulseSpan = statusEl.querySelector(".pulse");
+  if (textSpan) textSpan.textContent = msg; else statusEl.textContent = msg;
   statusEl.classList.toggle("err", isErr);
+  if (pulseSpan) {
+    pulseSpan.classList.toggle("err", isErr);
+    if (isErr) pulseSpan.classList.remove("idle");
+  }
+}
+
+function setPulse(mode, label) {
+  if (!pulseEl) return;
+  pulseEl.classList.remove("idle", "err");
+  if (mode === "idle") pulseEl.classList.add("idle");
+  else if (mode === "err") pulseEl.classList.add("err");
+  if (pulseLabelEl && label) pulseLabelEl.textContent = label;
 }
 
 async function loadLandmarker() {
@@ -160,6 +176,7 @@ function processFrame() {
         state.faceBackFirstSeenAt = 0;
         state.eyesClosed = false;
         setStatus("Ripreso — volto rilevato.");
+        setPulse("live", "Live");
       } else {
         return;
       }
@@ -172,6 +189,7 @@ function processFrame() {
       state.pauseStartedAt = state.lastFaceSeenAt;
       state.eyesClosed = false;
       setStatus("In pausa — nessun volto rilevato.");
+      setPulse("err", "In pausa");
     }
     if (state.paused) return;
   }
@@ -279,7 +297,7 @@ function drawChart() {
   const w = cssW - pad.l - pad.r;
   const h = cssH - pad.t - pad.b;
 
-  ctx.strokeStyle = "rgba(79, 172, 254, 0.2)";
+  ctx.strokeStyle = "rgba(249, 214, 232, 0.12)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.rect(pad.l, pad.t, w, h);
@@ -295,7 +313,7 @@ function drawChart() {
   const varMaxData = Math.max(5, ...vars.map((p) => p.v));
   const varMax = Math.ceil(varMaxData);
 
-  ctx.fillStyle = "#a0c4d4";
+  ctx.fillStyle = "#8f7a8b";
   ctx.font = "11px system-ui, sans-serif";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
@@ -303,7 +321,7 @@ function drawChart() {
     const y = pad.t + (h * i) / 4;
     const v = rateMax * (1 - i / 4);
     ctx.fillText(v.toFixed(0), pad.l - 6, y);
-    ctx.strokeStyle = "rgba(79, 172, 254, 0.1)";
+    ctx.strokeStyle = "rgba(249, 214, 232, 0.06)";
     ctx.beginPath();
     ctx.moveTo(pad.l, y);
     ctx.lineTo(pad.l + w, y);
@@ -321,45 +339,54 @@ function drawChart() {
   const toYRate = (v) => pad.t + h * (1 - Math.min(v, rateMax) / rateMax);
   const toYVar = (v) => pad.t + h * (1 - Math.min(v, varMax) / Math.max(varMax, 1));
 
-  if (rates.length > 1) {
-    ctx.strokeStyle = "#4ade80";
-    ctx.lineWidth = 2;
+  const drawLine = (pts, color, shadow, toY) => {
+    if (pts.length < 2) return;
+    ctx.save();
+    ctx.shadowColor = shadow;
+    ctx.shadowBlur = 12;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.2;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.beginPath();
-    rates.forEach((p, i) => {
-      const x = toX(p.t), y = toYRate(p.v);
+    pts.forEach((p, i) => {
+      const x = toX(p.t), y = toY(p.v);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
-  }
-  if (vars.length > 1) {
-    ctx.strokeStyle = "#06b6d4";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    vars.forEach((p, i) => {
-      const x = toX(p.t), y = toYVar(p.v);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-  }
+    ctx.restore();
+  };
+
+  drawLine(rates, "#f4b4c7", "rgba(244,180,199,0.5)", toYRate);
+  drawLine(vars,  "#8ed8ff", "rgba(142,216,255,0.4)", toYVar);
 }
 
 function drawPipCanvas(rate) {
   const ctx = pipCanvas.getContext("2d");
   const W = pipCanvas.width, H = pipCanvas.height;
-  ctx.fillStyle = "rgba(5, 24, 40, 0.8)";
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#140e1d");
+  bg.addColorStop(1, "#0a0810");
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
-  ctx.fillStyle = "#a0c4d4";
+  ctx.fillStyle = "#c9b7c6";
   ctx.font = "20px system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillText("Blink rate", W / 2, 18);
 
-  ctx.fillStyle = "#e8f4f8";
+  const iri = ctx.createLinearGradient(0, 50, W, 170);
+  iri.addColorStop(0.0, "#ffd4e4");
+  iri.addColorStop(0.3, "#c9a6ff");
+  iri.addColorStop(0.65, "#8ed8ff");
+  iri.addColorStop(1.0, "#a8f0d4");
+  ctx.fillStyle = iri;
   ctx.font = "bold 120px system-ui, sans-serif";
   ctx.fillText(rate.toFixed(1), W / 2, 50);
 
-  ctx.fillStyle = "#a0c4d4";
+  ctx.fillStyle = "#8f7a8b";
   ctx.font = "18px system-ui, sans-serif";
   ctx.fillText("blink / min", W / 2, 190);
 
@@ -367,7 +394,8 @@ function drawPipCanvas(rate) {
   const top = 230;
   const h = H - top - 20;
   const w = W - 2 * pad;
-  ctx.strokeStyle = "rgba(79, 172, 254, 0.2)";
+  ctx.strokeStyle = "rgba(249, 214, 232, 0.12)";
+  ctx.lineWidth = 1;
   ctx.strokeRect(pad, top, w, h);
 
   const now = Date.now();
@@ -375,8 +403,13 @@ function drawPipCanvas(rate) {
   const pts = state.rateHistory.filter((p) => p.t >= cutoff);
   const rateMax = Math.max(20, ...pts.map((p) => p.v));
   if (pts.length > 1) {
-    ctx.strokeStyle = "#4ade80";
+    ctx.save();
+    ctx.shadowColor = "rgba(244,180,199,0.5)";
+    ctx.shadowBlur = 14;
+    ctx.strokeStyle = "#f4b4c7";
     ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.beginPath();
     pts.forEach((p, i) => {
       const x = pad + w * (1 - (now - p.t) / CHART_WINDOW_MS);
@@ -384,6 +417,7 @@ function drawPipCanvas(rate) {
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
+    ctx.restore();
   }
 }
 
@@ -623,6 +657,7 @@ async function start() {
   stopBtn.disabled = false;
   pipBtn.disabled = !("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled;
   setStatus("In esecuzione — la detection continua anche cambiando tab.");
+  setPulse("live", "Live");
 }
 
 function stop() {
@@ -646,6 +681,7 @@ function stop() {
   startBtn.disabled = false;
   stopBtn.disabled = true;
   pipBtn.disabled = true;
+  setPulse("idle", "In attesa");
   renderSessions();
 }
 
@@ -659,6 +695,7 @@ autoPauseChk.addEventListener("change", () => {
     state.faceBackFirstSeenAt = 0;
     state.eyesClosed = false;
     setStatus("Auto-pausa disattivata — ripreso.");
+    setPulse("live", "Live");
   }
 });
 startBtn.addEventListener("click", start);

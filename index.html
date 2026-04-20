@@ -3,15 +3,74 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Blink Rate Tracker</title>
+  <title>Blink Rate Tracker — Digital Nature</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+  <div class="scene" aria-hidden="true">
+    <div class="bloom b1"></div>
+    <div class="bloom b2"></div>
+    <div class="bloom b3"></div>
+    <div class="bloom b4"></div>
+    <svg class="crystal c1" viewBox="0 0 100 180" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="iri1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%"   stop-color="#ffd4e4"/>
+          <stop offset="30%"  stop-color="#c9a6ff"/>
+          <stop offset="65%"  stop-color="#8ed8ff"/>
+          <stop offset="100%" stop-color="#a8f0d4"/>
+        </linearGradient>
+      </defs>
+      <polygon points="50,5 80,60 70,175 30,175 20,60" fill="url(#iri1)" opacity="0.55"/>
+      <polygon points="50,5 80,60 50,90 20,60"         fill="url(#iri1)" opacity="0.85"/>
+      <polygon points="50,5 50,90 30,175 20,60"        fill="#ffffff"    opacity="0.12"/>
+    </svg>
+    <svg class="crystal c2" viewBox="0 0 100 180" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="50,5 82,58 72,175 28,175 18,58" fill="url(#iri1)" opacity="0.50"/>
+      <polygon points="50,5 82,58 50,92 18,58"         fill="url(#iri1)" opacity="0.80"/>
+    </svg>
+    <svg class="crystal c3" viewBox="0 0 100 180" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="50,5 82,58 72,175 28,175 18,58" fill="url(#iri1)" opacity="0.45"/>
+      <polygon points="50,5 82,58 50,92 18,58"         fill="url(#iri1)" opacity="0.75"/>
+    </svg>
+    <svg class="crystal c4" viewBox="0 0 100 180" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="50,5 82,58 72,175 28,175 18,58" fill="url(#iri1)" opacity="0.50"/>
+      <polygon points="50,5 82,58 50,92 18,58"         fill="url(#iri1)" opacity="0.85"/>
+    </svg>
+    <div class="moss"></div>
+  </div>
+
   <main>
-    <header>
-      <h1>Blink Rate Tracker</h1>
-      <p class="sub">Frequenza di ammiccamento in tempo reale dalla webcam.</p>
-    </header>
+    <div class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"></div>
+        <div class="brand-text">
+          <span class="t">Blink Rate Tracker</span>
+          <span class="s">Digital Nature</span>
+        </div>
+      </div>
+      <div class="topbar-status">
+        <span id="pulse" class="pulse idle"></span>
+        <span id="pulseLabel">In attesa</span>
+      </div>
+    </div>
+
+    <section class="hero">
+      <h1 class="hero-title">Respira.<br/>Osserva.</h1>
+      <p class="hero-sub">
+        Frequenza di ammiccamento in tempo reale dalla webcam.
+        Un piccolo giardino digitale che registra la tua attenzione,
+        battito dopo battito.
+      </p>
+      <div class="hero-meta">
+        <span>finestra scorrevole · 5 min</span>
+        <span class="sep">·</span>
+        <span>rilevamento on-device</span>
+        <span class="sep">·</span>
+        <span>CSV esportabile</span>
+      </div>
+      <div class="floaty" aria-hidden="true"></div>
+    </section>
 
     <section class="controls">
       <button id="startBtn" type="button">Avvia</button>
@@ -61,30 +120,38 @@
       </div>
     </section>
 
-    <section class="chart-wrap">
-      <canvas id="chart" width="1000" height="280" aria-label="Grafico del blink rate"></canvas>
-      <div class="legend">
-        <span class="sw sw-rate"></span> blink rate (/min)
-        <span class="sw sw-var"></span> variazione (σ)
-      </div>
-    </section>
-
-    <section class="sessions-wrap">
-      <div class="sessions-header">
-        <h2>Sessioni salvate</h2>
-        <div class="sessions-actions">
-          <button id="exportBtn" type="button">Scarica riepilogo CSV</button>
-          <button id="clearBtn" type="button" class="danger">Cancella tutte</button>
+    <section class="dashboard">
+      <div class="chart-wrap">
+        <div class="chart-head">
+          <div class="chart-title">Frequenza in tempo reale — ultimi 120 s</div>
+          <div class="legend">
+            <span><span class="sw sw-rate"></span>blink rate (/min)</span>
+            <span><span class="sw sw-var"></span>variazione (σ)</span>
+          </div>
         </div>
+        <canvas id="chart" aria-label="Grafico del blink rate"></canvas>
       </div>
-      <div id="sessionList" class="session-list"></div>
-      <p class="hint-muted">
-        Le sessioni sono conservate in localStorage del browser. Il CSV della
-        sessione viene scaricato automaticamente alla pressione di "Ferma".
-      </p>
+
+      <div class="sessions-wrap">
+        <div class="sessions-header">
+          <h2>Sessioni salvate</h2>
+          <div class="sessions-actions">
+            <button id="exportBtn" type="button">Scarica riepilogo CSV</button>
+            <button id="clearBtn" type="button" class="danger">Cancella tutte</button>
+          </div>
+        </div>
+        <div id="sessionList" class="session-list"></div>
+        <p class="hint-muted">
+          Le sessioni sono conservate in localStorage del browser. Il CSV della
+          sessione viene scaricato automaticamente alla pressione di "Ferma".
+        </p>
+      </div>
     </section>
 
-    <p id="status" class="status" role="status" aria-live="polite">Pronto.</p>
+    <p id="status" class="status" role="status" aria-live="polite">
+      <span class="pulse idle" aria-hidden="true"></span>
+      <span>Pronto.</span>
+    </p>
   </main>
 
   <script type="module" src="./app.js"></script>
