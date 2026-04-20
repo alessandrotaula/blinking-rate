@@ -17,6 +17,8 @@ const VAR_WINDOW_SAMPLES = 30;
 const CHART_WINDOW_MS = 120_000;
 const UI_ROLLING_MS = 5 * 60_000;
 const BLINK_RETENTION_MS = 5 * 60_000;
+const FACE_LOST_MS = 1500;
+const FACE_BACK_MS = 500;
 const TICK_INTERVAL_MS = 40;
 const SESSIONS_KEY = "blinkSessions.v1";
 const MAX_STORED_SESSIONS = 20;
@@ -29,6 +31,7 @@ const wakeBtn = el("wakeBtn");
 const exportBtn = el("exportBtn");
 const clearBtn = el("clearBtn");
 const previewChk = el("previewChk");
+const autoPauseChk = el("autoPauseChk");
 const videoWrap = el("videoWrap");
 const video = el("video");
 const pipCanvas = el("pipCanvas");
@@ -59,6 +62,11 @@ const state = {
   audioCtx: null,
   audioOsc: null,
   totalBlinks: 0,
+  paused: false,
+  lastFaceSeenAt: 0,
+  faceBackFirstSeenAt: 0,
+  pauseStartedAt: 0,
+  totalPausedMs: 0,
 };
 
 function setStatus(msg, isErr = false) {
@@ -138,7 +146,38 @@ function processFrame() {
   if (video.readyState < 2) return;
   const res = state.landmarker.detectForVideo(video, performance.now());
   const bs = res?.faceBlendshapes?.[0]?.categories;
-  if (!bs) return;
+  const hasFace = Array.isArray(bs) && bs.length > 0;
+  const nowEpoch = Date.now();
+  const autoPause = autoPauseChk.checked;
+
+  if (hasFace) {
+    state.lastFaceSeenAt = nowEpoch;
+    if (state.paused) {
+      if (!state.faceBackFirstSeenAt) state.faceBackFirstSeenAt = nowEpoch;
+      if (nowEpoch - state.faceBackFirstSeenAt >= FACE_BACK_MS) {
+        state.totalPausedMs += nowEpoch - state.pauseStartedAt;
+        state.paused = false;
+        state.faceBackFirstSeenAt = 0;
+        state.eyesClosed = false;
+        setStatus("Ripreso — volto rilevato.");
+      } else {
+        return;
+      }
+    }
+  } else {
+    state.faceBackFirstSeenAt = 0;
+    if (autoPause && !state.paused && state.lastFaceSeenAt &&
+        nowEpoch - state.lastFaceSeenAt > FACE_LOST_MS) {
+      state.paused = true;
+      state.pauseStartedAt = state.lastFaceSeenAt;
+      state.eyesClosed = false;
+      setStatus("In pausa — nessun volto rilevato.");
+    }
+    if (state.paused) return;
+  }
+
+  if (!hasFace) return;
+
   const left = bs.find((c) => c.categoryName === "eyeBlinkLeft")?.score ?? 0;
   const right = bs.find((c) => c.categoryName === "eyeBlinkRight")?.score ?? 0;
   const score = (left + right) / 2;
@@ -149,13 +188,14 @@ function processFrame() {
     state.eyesClosed = false;
     if (now - state.lastBlinkAt > MIN_BLINK_GAP_MS) {
       state.lastBlinkAt = now;
-      state.blinkTimes.push(Date.now());
+      state.blinkTimes.push(nowEpoch);
       state.totalBlinks++;
     }
   }
 }
 
 function sample() {
+  if (state.paused) return;
   const now = Date.now();
   const cutoff = now - BLINK_RETENTION_MS;
   while (state.blinkTimes.length && state.blinkTimes[0] < cutoff) state.blinkTimes.shift();
@@ -193,25 +233,32 @@ function fmtDate(ts) {
   return d.toLocaleString();
 }
 
-function updateUI() {
+function activeElapsedMs() {
   const now = Date.now();
-  const elapsedMs = Math.max(now - state.startedAt, 1);
-  const elapsedMin = elapsedMs / 60000;
+  const raw = now - state.startedAt;
+  const currentPause = state.paused ? (now - state.pauseStartedAt) : 0;
+  return Math.max(1, raw - state.totalPausedMs - currentPause);
+}
 
+function updateUI() {
+  const activeMs = activeElapsedMs();
+  const activeMin = activeMs / 60000;
+
+  const now = Date.now();
   const t5 = now - UI_ROLLING_MS;
   let blinks5 = 0;
   for (const t of state.blinkTimes) if (t >= t5) blinks5++;
-  const windowMin = Math.min(elapsedMin, UI_ROLLING_MS / 60000);
+  const windowMin = Math.min(activeMin, UI_ROLLING_MS / 60000);
   const rate5m = windowMin > 0 ? blinks5 / windowMin : 0;
 
-  const rateSession = state.totalBlinks / elapsedMin;
+  const rateSession = state.totalBlinks / activeMin;
   const varSession = stddev(state.rateHistory.map((p) => p.v));
 
   rateVal.textContent = rate5m.toFixed(1);
   sessionRateVal.textContent = rateSession.toFixed(1);
   varVal.textContent = varSession.toFixed(2);
   totalVal.textContent = String(state.totalBlinks);
-  sessionVal.textContent = fmtTime(elapsedMs);
+  sessionVal.textContent = fmtTime(activeMs) + (state.paused ? " · in pausa" : "");
   drawChart();
   drawPipCanvas(rate5m);
 }
@@ -559,6 +606,11 @@ async function start() {
   state.totalBlinks = 0;
   state.eyesClosed = false;
   state.lastBlinkAt = 0;
+  state.paused = false;
+  state.lastFaceSeenAt = Date.now();
+  state.faceBackFirstSeenAt = 0;
+  state.pauseStartedAt = 0;
+  state.totalPausedMs = 0;
 
   startKeepAlive();
   state.tickWorker = makeTickWorker();
@@ -599,6 +651,15 @@ function stop() {
 
 previewChk.addEventListener("change", () => {
   videoWrap.hidden = !previewChk.checked;
+});
+autoPauseChk.addEventListener("change", () => {
+  if (!autoPauseChk.checked && state.paused) {
+    state.totalPausedMs += Date.now() - state.pauseStartedAt;
+    state.paused = false;
+    state.faceBackFirstSeenAt = 0;
+    state.eyesClosed = false;
+    setStatus("Auto-pausa disattivata — ripreso.");
+  }
 });
 startBtn.addEventListener("click", start);
 stopBtn.addEventListener("click", stop);

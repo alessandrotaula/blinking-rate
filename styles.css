@@ -60,12 +60,12 @@ header .sub {
 .controls button[aria-pressed="true"] { background: #1f3b5d; border-color: var(--accent); }
 
 .preview-toggle {
-  margin-left: auto;
   color: var(--muted);
   display: inline-flex;
   gap: 6px;
   align-items: center;
 }
+.preview-toggle:first-of-type { margin-left: auto; }
 
 .stats {
   display: grid;
