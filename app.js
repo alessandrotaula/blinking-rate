@@ -45,6 +45,14 @@ const statusEl = el("status");
 const sessionList = el("sessionList");
 const pulseEl = el("pulse");
 const pulseLabelEl = el("pulseLabel");
+const reportSection = el("reportSection");
+const reportDate = el("reportDate");
+const repDuration = el("repDuration");
+const repTotal = el("repTotal");
+const repAvgRate = el("repAvgRate");
+const repTrend = el("repTrend");
+const repVar = el("repVar");
+const reportAnalysis = el("reportAnalysis");
 
 const state = {
   landmarker: null,
@@ -675,6 +683,7 @@ function stop() {
   if (saved) {
     downloadSession(saved);
     setStatus(`Sessione salvata (${saved.totalBlinks} blink in ${fmtTime(saved.durationMs)}). CSV scaricato.`);
+    generateReport(saved);
   } else {
     setStatus("Fermato.");
   }
@@ -718,3 +727,241 @@ window.addEventListener("beforeunload", () => {
 });
 
 renderSessions();
+
+el("closeReportBtn").addEventListener("click", () => {
+  reportSection.hidden = true;
+});
+
+/* ── Session report ── */
+
+function linReg(xs, ys) {
+  const n = xs.length;
+  const sumX = xs.reduce((a, b) => a + b, 0);
+  const sumY = ys.reduce((a, b) => a + b, 0);
+  const sumXY = xs.reduce((a, x, i) => a + x * ys[i], 0);
+  const sumX2 = xs.reduce((a, x) => a + x * x, 0);
+  const denom = n * sumX2 - sumX * sumX;
+  if (denom === 0) return { slope: 0, intercept: sumY / n };
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  return { slope, intercept };
+}
+
+function generateReport(session) {
+  if (!session || session.samples.length < 4) return;
+
+  const samples = session.samples;
+  const rates = samples.map((s) => s.rate ?? s.v ?? 0);
+  const n = rates.length;
+  const avg = rates.reduce((a, b) => a + b, 0) / n;
+  const minRate = Math.min(...rates);
+  const maxRate = Math.max(...rates);
+  const sd = stddev(rates);
+
+  const xs = samples.map((_, i) => i);
+  const { slope, intercept } = linReg(xs, rates);
+  const slopePerMin = slope * (60000 / SAMPLE_INTERVAL_MS);
+
+  repDuration.textContent = fmtTime(session.durationMs);
+  repTotal.textContent = String(session.totalBlinks);
+  repAvgRate.textContent = avg.toFixed(1);
+  repVar.textContent = sd.toFixed(2) + " σ";
+
+  const trendLabel =
+    slopePerMin > 0.4 ? `↑ +${slopePerMin.toFixed(1)}/min` :
+    slopePerMin < -0.4 ? `↓ ${slopePerMin.toFixed(1)}/min` : "→ stabile";
+  repTrend.textContent = trendLabel;
+  reportDate.textContent = fmtDate(session.startedAt);
+
+  drawReportChart(session, rates, slope, intercept);
+
+  const peakIdx   = rates.indexOf(maxRate);
+  const valleyIdx = rates.indexOf(minRate);
+  const peakMin   = ((samples[peakIdx].t - session.startedAt) / 60000).toFixed(1);
+  const valleyMin = ((samples[valleyIdx].t - session.startedAt) / 60000).toFixed(1);
+
+  reportAnalysis.innerHTML = [
+    buildFocusCard(avg),
+    buildTrendCard(slopePerMin),
+    buildVarCard(sd),
+    buildPeaksCard(minRate, maxRate, valleyMin, peakMin),
+    buildEyeHealthCard(avg, sd),
+  ].join("");
+
+  reportSection.hidden = false;
+  requestAnimationFrame(() =>
+    reportSection.scrollIntoView({ behavior: "smooth", block: "start" })
+  );
+}
+
+function drawReportChart(session, rates, slope, intercept) {
+  const canvas = document.getElementById("reportChart");
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth;
+  const cssH = 260;
+  canvas.width  = cssW * dpr;
+  canvas.height = cssH * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const pad = { l: 44, r: 16, t: 20, b: 30 };
+  const W = cssW - pad.l - pad.r;
+  const H = cssH - pad.t - pad.b;
+  const n = rates.length;
+  const rateMax = Math.ceil(Math.max(22, ...rates) / 5) * 5;
+  const samples = session.samples;
+
+  const toX = (i) => pad.l + W * (i / Math.max(n - 1, 1));
+  const toY = (v) => pad.t + H * (1 - Math.min(Math.max(v, 0), rateMax) / rateMax);
+
+  ctx.strokeStyle = "rgba(249,214,232,0.12)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(pad.l, pad.t, W, H);
+
+  ctx.fillStyle = "#8f7a8b";
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + H * i / 4;
+    ctx.fillText((rateMax * (1 - i / 4)).toFixed(0), pad.l - 8, y);
+    ctx.strokeStyle = "rgba(249,214,232,0.06)";
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + W, y); ctx.stroke();
+  }
+
+  const y20 = toY(Math.min(20, rateMax));
+  const y12 = toY(12);
+  ctx.fillStyle = "rgba(127,185,139,0.07)";
+  ctx.fillRect(pad.l, y20, W, y12 - y20);
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = "rgba(127,185,139,0.22)";
+  ctx.lineWidth = 1;
+  [12, 20].forEach((v) => {
+    if (v <= rateMax) {
+      ctx.beginPath(); ctx.moveTo(pad.l, toY(v)); ctx.lineTo(pad.l + W, toY(v)); ctx.stroke();
+    }
+  });
+  ctx.setLineDash([]);
+
+  const totalMin = session.durationMs / 60000;
+  const mStep = totalMin > 15 ? 5 : totalMin > 5 ? 2 : 1;
+  ctx.fillStyle = "#8f7a8b";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (let m = 0; m <= Math.ceil(totalMin); m += mStep) {
+    const frac = m / Math.max(totalMin, 0.001);
+    if (frac <= 1.01) ctx.fillText(m + "m", pad.l + W * frac, pad.t + H + 6);
+  }
+
+  if (n > 1) {
+    ctx.save();
+    ctx.shadowColor = "rgba(244,180,199,0.45)";
+    ctx.shadowBlur = 10;
+    ctx.strokeStyle = "#f4b4c7";
+    ctx.lineWidth = 2.2;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    rates.forEach((v, i) => { i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v)); });
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = "rgba(201,166,255,0.75)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    ctx.moveTo(toX(0),     toY(intercept));
+    ctx.lineTo(toX(n - 1), toY(slope * (n - 1) + intercept));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+}
+
+function anaCard(dotClass, title, body) {
+  return `<div class="ana-card">
+    <div class="ana-card-header">
+      <span class="ana-dot ${dotClass}"></span>
+      <span class="ana-card-title">${title}</span>
+    </div>
+    <div class="ana-card-body">${body}</div>
+  </div>`;
+}
+
+function buildFocusCard(avg) {
+  if (avg < 8)
+    return anaCard("red", "Concentrazione intensa",
+      `Rate medio <strong>${avg.toFixed(1)}/min</strong>, ben al di sotto della norma (12–20/min). ` +
+      `Questo indica un focus molto profondo — o una fissazione prolungata che riduce il riflesso di ammiccamento. ` +
+      `La riduzione del blink rate accelera l'evaporazione del film lacrimale: fai pause visive frequenti.`);
+  if (avg < 12)
+    return anaCard("yellow", "Stato di focus elevato",
+      `Rate medio <strong>${avg.toFixed(1)}/min</strong>: inferiore alla media fisiologica a riposo. ` +
+      `Tipico di attività cognitivamente impegnative come lettura, coding o analisi. ` +
+      `Considera la regola 20-20-20: ogni 20 minuti, guarda a 6 m di distanza per 20 secondi.`);
+  if (avg < 20)
+    return anaCard("green", "Rate fisiologico normale",
+      `Rate medio <strong>${avg.toFixed(1)}/min</strong>: nel range sano (12–20/min). ` +
+      `Nessun segnale di sovraccarico — mente e occhi in equilibrio durante la sessione.`);
+  return anaCard("red", "Segnali di affaticamento",
+    `Rate medio <strong>${avg.toFixed(1)}/min</strong>, oltre la norma a riposo. ` +
+    `Un tasso elevato può indicare affaticamento visivo, secchezza oculare o stress prolungato. ` +
+    `Controlla luminosità, postura e considera una pausa più lunga.`);
+}
+
+function buildTrendCard(slopePerMin) {
+  if (Math.abs(slopePerMin) < 0.4)
+    return anaCard("green", "Andamento stabile",
+      `Trendline quasi piatta (<strong>${slopePerMin >= 0 ? "+" : ""}${slopePerMin.toFixed(2)}/min·min</strong>). ` +
+      `Stato cognitivo uniforme e sostenuto — ottima coerenza attentiva per tutta la sessione.`);
+  if (slopePerMin > 0)
+    return anaCard("red", "Affaticamento progressivo",
+      `Il blink rate è aumentato di circa <strong>+${slopePerMin.toFixed(1)}/min</strong> per ogni minuto trascorso. ` +
+      `Trend crescente = accumulo di fatica cognitiva e visiva. ` +
+      `Prova la tecnica Pomodoro: 25 min lavoro + 5 min pausa per spezzare l'accumulo.`);
+  return anaCard("iris", "Approfondimento del focus",
+    `Il blink rate è calato di circa <strong>${slopePerMin.toFixed(1)}/min</strong> per minuto. ` +
+    `Un trend decrescente riflette il classico warm-up cognitivo: dopo una fase iniziale di orientamento, ` +
+    `l'attenzione si è consolidata e approfondita progressivamente.`);
+}
+
+function buildVarCard(sd) {
+  if (sd < 2)
+    return anaCard("green", "Stato cognitivo consistente",
+      `Variabilità <strong>σ = ${sd.toFixed(2)}</strong> — molto bassa. ` +
+      `Il blink rate è rimasto stabile: nessuna distrazione evidente nel pattern motorio oculare, ` +
+      `attenzione omogenea e sostenuta.`);
+  if (sd < 5)
+    return anaCard("yellow", "Variabilità normale",
+      `Variabilità <strong>σ = ${sd.toFixed(2)}</strong>. ` +
+      `Oscillazioni fisiologiche che riflettono i naturali cicli di attenzione ultradiani (~90 min), ` +
+      `micro-pause cognitive e transizioni tra sotto-compiti.`);
+  return anaCard("red", "Alta variabilità",
+    `Variabilità <strong>σ = ${sd.toFixed(2)}</strong> — elevata. ` +
+    `Suggerisce interruzioni frequenti, distrazioni esterne o forti transizioni di stato. ` +
+    `Sessioni dedicate a un singolo compito in ambienti a bassa distrazione tendono a ridurla.`);
+}
+
+function buildPeaksCard(minRate, maxRate, valleyMin, peakMin) {
+  return anaCard("cyan", "Momenti notevoli",
+    `<strong>Picco massimo:</strong> ${maxRate.toFixed(1)}/min al minuto ${peakMin} ` +
+    `— probabile picco di stress, distrazione o cambio di attività.<br>` +
+    `<strong>Minimo registrato:</strong> ${minRate.toFixed(1)}/min al minuto ${valleyMin} ` +
+    `— finestra di massima concentrazione della sessione.`);
+}
+
+function buildEyeHealthCard(avg, sd) {
+  const risk = avg < 8 || (avg < 12 && sd > 4);
+  return anaCard(risk ? "yellow" : "green",
+    "Salute oculare",
+    risk
+      ? `Con <strong>${avg.toFixed(1)}/min</strong> sei sotto la soglia raccomandata per il comfort visivo. ` +
+        `La riduzione del blink diminuisce la lubrificazione della cornea (sindrome dell'occhio secco da schermo). ` +
+        `Usa collirio lubrificante se necessario, e tieni lo schermo leggermente sotto il livello degli occhi.`
+      : `<strong>${avg.toFixed(1)}/min</strong> è compatibile con una buona idratazione oculare. ` +
+        `Mantieni una distanza di almeno 50–70 cm dallo schermo e fai pause visive periodiche ` +
+        `per ridurre lo sforzo accomodativo.`);
+}
+

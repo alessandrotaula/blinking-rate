@@ -149,6 +149,52 @@
       </div>
     </section>
 
+    <!-- ── Session Report ── -->
+    <section id="reportSection" class="report-section" hidden>
+      <div class="report-header">
+        <div>
+          <h2 class="report-title">Rapporto sessione</h2>
+          <span id="reportDate" class="report-date"></span>
+        </div>
+        <button id="closeReportBtn" type="button" class="report-close">Chiudi</button>
+      </div>
+
+      <div class="report-kpis">
+        <div class="report-kpi">
+          <div class="rkpi-label">Durata</div>
+          <div class="rkpi-value" id="repDuration">—</div>
+        </div>
+        <div class="report-kpi">
+          <div class="rkpi-label">Totale blink</div>
+          <div class="rkpi-value" id="repTotal">—</div>
+        </div>
+        <div class="report-kpi">
+          <div class="rkpi-label">Rate medio</div>
+          <div class="rkpi-value"><span id="repAvgRate">—</span><span class="rkpi-unit">/min</span></div>
+        </div>
+        <div class="report-kpi">
+          <div class="rkpi-label">Trend</div>
+          <div class="rkpi-value" id="repTrend">—</div>
+        </div>
+        <div class="report-kpi">
+          <div class="rkpi-label">Variabilità σ</div>
+          <div class="rkpi-value" id="repVar">—</div>
+        </div>
+      </div>
+
+      <div class="report-chart-wrap">
+        <div class="report-chart-title">Blink rate durante la sessione</div>
+        <canvas id="reportChart"></canvas>
+        <div class="report-chart-legend">
+          <span><span class="sw sw-rate"></span>blink rate (/min)</span>
+          <span><span class="sw sw-trend"></span>trendline</span>
+          <span><span class="sw sw-normal"></span>range normale (12–20/min)</span>
+        </div>
+      </div>
+
+      <div id="reportAnalysis" class="report-analysis"></div>
+    </section>
+
     <p id="status" class="status" role="status" aria-live="polite">
       <span class="pulse idle" aria-hidden="true"></span>
       <span>Pronto.</span>
