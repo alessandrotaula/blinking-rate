@@ -15,6 +15,8 @@ const RATE_WINDOW_MS = 60_000;
 const SAMPLE_INTERVAL_MS = 500;
 const VAR_WINDOW_SAMPLES = 30;
 const CHART_WINDOW_MS = 120_000;
+const UI_ROLLING_MS = 5 * 60_000;
+const BLINK_RETENTION_MS = 5 * 60_000;
 const TICK_INTERVAL_MS = 40;
 const SESSIONS_KEY = "blinkSessions.v1";
 const MAX_STORED_SESSIONS = 20;
@@ -32,6 +34,7 @@ const video = el("video");
 const pipCanvas = el("pipCanvas");
 const chart = el("chart");
 const rateVal = el("rateVal");
+const sessionRateVal = el("sessionRateVal");
 const varVal = el("varVal");
 const totalVal = el("totalVal");
 const sessionVal = el("sessionVal");
@@ -154,11 +157,15 @@ function processFrame() {
 
 function sample() {
   const now = Date.now();
-  const cutoff = now - RATE_WINDOW_MS;
+  const cutoff = now - BLINK_RETENTION_MS;
   while (state.blinkTimes.length && state.blinkTimes[0] < cutoff) state.blinkTimes.shift();
+
+  const t60 = now - RATE_WINDOW_MS;
+  let blinks60 = 0;
+  for (const t of state.blinkTimes) if (t >= t60) blinks60++;
   const elapsedSec = Math.min((now - state.startedAt) / 1000, 60);
   const rate = elapsedSec > 0
-    ? state.blinkTimes.length * (60 / Math.max(elapsedSec, 1))
+    ? blinks60 * (60 / Math.max(elapsedSec, 1))
     : 0;
 
   state.rateHistory.push({ t: now, v: rate });
@@ -187,14 +194,26 @@ function fmtDate(ts) {
 }
 
 function updateUI() {
-  const last = state.rateHistory.at(-1)?.v ?? 0;
-  const lastVar = state.varHistory.at(-1)?.v ?? 0;
-  rateVal.textContent = last.toFixed(1);
-  varVal.textContent = lastVar.toFixed(2);
+  const now = Date.now();
+  const elapsedMs = Math.max(now - state.startedAt, 1);
+  const elapsedMin = elapsedMs / 60000;
+
+  const t5 = now - UI_ROLLING_MS;
+  let blinks5 = 0;
+  for (const t of state.blinkTimes) if (t >= t5) blinks5++;
+  const windowMin = Math.min(elapsedMin, UI_ROLLING_MS / 60000);
+  const rate5m = windowMin > 0 ? blinks5 / windowMin : 0;
+
+  const rateSession = state.totalBlinks / elapsedMin;
+  const varSession = stddev(state.rateHistory.map((p) => p.v));
+
+  rateVal.textContent = rate5m.toFixed(1);
+  sessionRateVal.textContent = rateSession.toFixed(1);
+  varVal.textContent = varSession.toFixed(2);
   totalVal.textContent = String(state.totalBlinks);
-  sessionVal.textContent = fmtTime(Date.now() - state.startedAt);
+  sessionVal.textContent = fmtTime(elapsedMs);
   drawChart();
-  drawPipCanvas(last);
+  drawPipCanvas(rate5m);
 }
 
 function drawChart() {
