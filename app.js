@@ -279,7 +279,7 @@ function drawChart() {
   const w = cssW - pad.l - pad.r;
   const h = cssH - pad.t - pad.b;
 
-  ctx.strokeStyle = "#252b3a";
+  ctx.strokeStyle = "rgba(79, 172, 254, 0.2)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.rect(pad.l, pad.t, w, h);
@@ -295,7 +295,7 @@ function drawChart() {
   const varMaxData = Math.max(5, ...vars.map((p) => p.v));
   const varMax = Math.ceil(varMaxData);
 
-  ctx.fillStyle = "#8a93a6";
+  ctx.fillStyle = "#a0c4d4";
   ctx.font = "11px system-ui, sans-serif";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
@@ -303,7 +303,7 @@ function drawChart() {
     const y = pad.t + (h * i) / 4;
     const v = rateMax * (1 - i / 4);
     ctx.fillText(v.toFixed(0), pad.l - 6, y);
-    ctx.strokeStyle = "#1b2030";
+    ctx.strokeStyle = "rgba(79, 172, 254, 0.1)";
     ctx.beginPath();
     ctx.moveTo(pad.l, y);
     ctx.lineTo(pad.l + w, y);
@@ -322,7 +322,7 @@ function drawChart() {
   const toYVar = (v) => pad.t + h * (1 - Math.min(v, varMax) / Math.max(varMax, 1));
 
   if (rates.length > 1) {
-    ctx.strokeStyle = "#60a5fa";
+    ctx.strokeStyle = "#4ade80";
     ctx.lineWidth = 2;
     ctx.beginPath();
     rates.forEach((p, i) => {
@@ -332,7 +332,7 @@ function drawChart() {
     ctx.stroke();
   }
   if (vars.length > 1) {
-    ctx.strokeStyle = "#f472b6";
+    ctx.strokeStyle = "#06b6d4";
     ctx.lineWidth = 2;
     ctx.beginPath();
     vars.forEach((p, i) => {
@@ -346,20 +346,20 @@ function drawChart() {
 function drawPipCanvas(rate) {
   const ctx = pipCanvas.getContext("2d");
   const W = pipCanvas.width, H = pipCanvas.height;
-  ctx.fillStyle = "#0b0d12";
+  ctx.fillStyle = "rgba(5, 24, 40, 0.8)";
   ctx.fillRect(0, 0, W, H);
 
-  ctx.fillStyle = "#8a93a6";
+  ctx.fillStyle = "#a0c4d4";
   ctx.font = "20px system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillText("Blink rate", W / 2, 18);
 
-  ctx.fillStyle = "#e8ecf4";
+  ctx.fillStyle = "#e8f4f8";
   ctx.font = "bold 120px system-ui, sans-serif";
   ctx.fillText(rate.toFixed(1), W / 2, 50);
 
-  ctx.fillStyle = "#8a93a6";
+  ctx.fillStyle = "#a0c4d4";
   ctx.font = "18px system-ui, sans-serif";
   ctx.fillText("blink / min", W / 2, 190);
 
@@ -367,7 +367,7 @@ function drawPipCanvas(rate) {
   const top = 230;
   const h = H - top - 20;
   const w = W - 2 * pad;
-  ctx.strokeStyle = "#252b3a";
+  ctx.strokeStyle = "rgba(79, 172, 254, 0.2)";
   ctx.strokeRect(pad, top, w, h);
 
   const now = Date.now();
@@ -375,7 +375,7 @@ function drawPipCanvas(rate) {
   const pts = state.rateHistory.filter((p) => p.t >= cutoff);
   const rateMax = Math.max(20, ...pts.map((p) => p.v));
   if (pts.length > 1) {
-    ctx.strokeStyle = "#60a5fa";
+    ctx.strokeStyle = "#4ade80";
     ctx.lineWidth = 3;
     ctx.beginPath();
     pts.forEach((p, i) => {
