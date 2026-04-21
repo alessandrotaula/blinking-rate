@@ -54,7 +54,13 @@ const repTotal = el("repTotal");
 const repAvgRate = el("repAvgRate");
 const repTrend = el("repTrend");
 const repVar = el("repVar");
+const repFdAvg = el("repFdAvg");
+const repCfAvg = el("repCfAvg");
+const repFdTrend = el("repFdTrend");
+const repCfTrend = el("repCfTrend");
 const reportAnalysis = el("reportAnalysis");
+const exportReportBtn = el("exportReportBtn");
+let currentReportSession = null;
 
 const state = {
   landmarker: null,
@@ -90,6 +96,7 @@ const state = {
   cogFD_conf: 0,
   cogCF_conf: 0,
   cogStateLabel: "idle",
+  cogHistory: [],
   lastResumedAt: 0,
   activeSupprStart: null,
   suppressionEps: [],
@@ -541,6 +548,7 @@ function persistCurrentSession() {
       rate: p.v,
       variation: state.varHistory[i]?.v ?? 0,
     })),
+    cogSamples: state.cogHistory.slice(),
     blinkTimes: state.blinkTimes.slice(),
   };
   const sessions = loadSessions();
@@ -561,6 +569,60 @@ function sessionToCSV(s) {
   lines.push("timestamp_iso,epoch_ms,rate_per_min,variation_sigma");
   for (const p of s.samples) {
     lines.push(`${new Date(p.t).toISOString()},${p.t},${p.rate.toFixed(3)},${p.variation.toFixed(3)}`);
+  }
+  return lines.join("\n");
+}
+
+function reportToCSV(s) {
+  const rates = s.samples.map((p) => p.rate ?? 0);
+  const sd = stddev(rates);
+  const xs = s.samples.map((_, i) => i);
+  const { slope } = linReg(xs, rates);
+  const slopePerMin = slope * (60000 / SAMPLE_INTERVAL_MS);
+  const cs = cogStats(s);
+
+  const lines = [];
+  lines.push("# ===== BLINK RATE SESSION REPORT =====");
+  lines.push(`# session_id,${s.id}`);
+  lines.push(`# started_at,${new Date(s.startedAt).toISOString()}`);
+  lines.push(`# ended_at,${new Date(s.endedAt).toISOString()}`);
+  lines.push(`# duration_seconds,${(s.durationMs / 1000).toFixed(1)}`);
+  lines.push(`# total_blinks,${s.totalBlinks}`);
+  lines.push(`# avg_rate_per_min,${s.avgRate.toFixed(3)}`);
+  lines.push(`# std_dev_sigma,${sd.toFixed(3)}`);
+  lines.push(`# rate_slope_per_min,${slopePerMin.toFixed(3)}`);
+  if (cs.ready) {
+    lines.push(`# focus_depth_avg,${cs.fdAvg.toFixed(2)}`);
+    lines.push(`# focus_depth_slope_per_min,${cs.fdSlopePerMin.toFixed(3)}`);
+    lines.push(`# cognitive_fatigue_avg,${cs.cfAvg.toFixed(2)}`);
+    lines.push(`# cognitive_fatigue_slope_per_min,${cs.cfSlopePerMin.toFixed(3)}`);
+    lines.push(`# cognitive_samples_usable,${cs.count}`);
+  } else {
+    lines.push(`# focus_depth_avg,`);
+    lines.push(`# cognitive_fatigue_avg,`);
+    lines.push(`# cognitive_samples_usable,${cs.count}`);
+    lines.push(`# note,insufficient_cognitive_data`);
+  }
+  lines.push("");
+  lines.push("# ----- Rate time series (per sample) -----");
+  lines.push("timestamp_iso,epoch_ms,rate_per_min,variation_sigma");
+  for (const p of s.samples) {
+    lines.push(`${new Date(p.t).toISOString()},${p.t},${(p.rate ?? 0).toFixed(3)},${(p.variation ?? 0).toFixed(3)}`);
+  }
+  lines.push("");
+  lines.push("# ----- Cognitive time series (per cognitive tick) -----");
+  lines.push("timestamp_iso,epoch_ms,focus_depth,cognitive_fatigue,fd_confidence,cf_confidence,state");
+  const cog = s.cogSamples || [];
+  for (const c of cog) {
+    lines.push([
+      new Date(c.t).toISOString(),
+      c.t,
+      Number.isFinite(c.fd) ? c.fd : "",
+      Number.isFinite(c.cf) ? c.cf : "",
+      (c.fdConf ?? 0).toFixed(3),
+      (c.cfConf ?? 0).toFixed(3),
+      c.st ?? "",
+    ].join(","));
   }
   return lines.join("\n");
 }
@@ -693,6 +755,7 @@ async function start() {
   state.cogFD_conf = 0;
   state.cogCF_conf = 0;
   state.cogStateLabel = "calib";
+  state.cogHistory = [];
   state.lastResumedAt = 0;
   state.activeSupprStart = null;
   state.suppressionEps = [];
@@ -793,6 +856,16 @@ el("closeReportBtn").addEventListener("click", () => {
   reportSection.hidden = true;
 });
 
+exportReportBtn?.addEventListener("click", () => {
+  if (!currentReportSession) {
+    setStatus("Nessun report disponibile da esportare.", true);
+    return;
+  }
+  const csv = reportToCSV(currentReportSession);
+  const ts = new Date(currentReportSession.startedAt).toISOString().replace(/[:.]/g, "-");
+  downloadText(`blink-report-${ts}.csv`, csv);
+});
+
 /* ── Session report ── */
 
 function linReg(xs, ys) {
@@ -808,8 +881,43 @@ function linReg(xs, ys) {
   return { slope, intercept };
 }
 
+function cogStats(session) {
+  const cog = (session.cogSamples || []).filter(c =>
+    Number.isFinite(c.fd) && Number.isFinite(c.cf) && (c.fdConf ?? 0) >= 0.35
+  );
+  if (cog.length < 3) {
+    return { ready: false, fdAvg: null, cfAvg: null, fdSlopePerMin: 0, cfSlopePerMin: 0, count: cog.length };
+  }
+  const fdVals = cog.map(c => c.fd);
+  const cfVals = cog.map(c => c.cf);
+  const fdAvg = fdVals.reduce((a, b) => a + b, 0) / fdVals.length;
+  const cfAvg = cfVals.reduce((a, b) => a + b, 0) / cfVals.length;
+  const t0 = cog[0].t;
+  const xs = cog.map(c => (c.t - t0) / 60000); // minutes
+  const fdReg = linReg(xs, fdVals);
+  const cfReg = linReg(xs, cfVals);
+  return {
+    ready: true,
+    fdAvg, cfAvg,
+    fdSlopePerMin: fdReg.slope,
+    cfSlopePerMin: cfReg.slope,
+    fdReg, cfReg,
+    count: cog.length,
+  };
+}
+
+function trendTxt(slopePerMin, unit = "") {
+  const s = slopePerMin;
+  const abs = Math.abs(s);
+  if (abs < 0.3) return `→ stabile (${s >= 0 ? "+" : ""}${s.toFixed(2)}${unit}/min)`;
+  if (s > 0) return `↑ +${s.toFixed(2)}${unit}/min`;
+  return `↓ ${s.toFixed(2)}${unit}/min`;
+}
+
 function generateReport(session) {
   if (!session || session.samples.length < 4) return;
+
+  currentReportSession = session;
 
   const samples = session.samples;
   const rates = samples.map((s) => s.rate ?? s.v ?? 0);
@@ -834,18 +942,38 @@ function generateReport(session) {
   repTrend.textContent = trendLabel;
   reportDate.textContent = fmtDate(session.startedAt);
 
+  const cs = cogStats(session);
+  if (cs.ready) {
+    repFdAvg.textContent = cs.fdAvg.toFixed(0);
+    repCfAvg.textContent = cs.cfAvg.toFixed(0);
+    repFdTrend.textContent = trendTxt(cs.fdSlopePerMin, " pt");
+    repCfTrend.textContent = trendTxt(cs.cfSlopePerMin, " pt");
+  } else {
+    repFdAvg.textContent = "—";
+    repCfAvg.textContent = "—";
+    repFdTrend.textContent = "dati insufficienti";
+    repCfTrend.textContent = "dati insufficienti";
+  }
+
   const peakIdx   = rates.indexOf(maxRate);
   const valleyIdx = rates.indexOf(minRate);
   const peakMin   = ((samples[peakIdx].t - session.startedAt) / 60000).toFixed(1);
   const valleyMin = ((samples[valleyIdx].t - session.startedAt) / 60000).toFixed(1);
 
-  reportAnalysis.innerHTML = [
+  const analysisCards = [
     buildFocusCard(avg),
     buildTrendCard(slopePerMin),
     buildVarCard(sd),
     buildPeaksCard(minRate, maxRate, valleyMin, peakMin),
     buildEyeHealthCard(avg, sd),
-  ].join("");
+  ];
+  if (cs.ready) {
+    analysisCards.push(buildFocusDepthCard(cs.fdAvg, cs.fdSlopePerMin));
+    analysisCards.push(buildCognitiveFatigueCard(cs.cfAvg, cs.cfSlopePerMin));
+  } else {
+    analysisCards.push(buildCogInsufficientCard());
+  }
+  reportAnalysis.innerHTML = analysisCards.join("");
 
   reportSection.hidden = false;
   requestAnimationFrame(() => {
@@ -1023,6 +1151,65 @@ function buildEyeHealthCard(avg, sd) {
       : `<strong>${avg.toFixed(1)}/min</strong> è compatibile con una buona idratazione oculare. ` +
         `Mantieni una distanza di almeno 50–70 cm dallo schermo e fai pause visive periodiche ` +
         `per ridurre lo sforzo accomodativo.`);
+}
+
+function buildFocusDepthCard(fdAvg, fdSlopePerMin) {
+  const level =
+    fdAvg >= 70 ? "profondo" :
+    fdAvg >= 50 ? "stabile"  :
+    fdAvg >= 35 ? "superficiale" : "disimpegnato";
+  const trend = fdSlopePerMin;
+  let tone = "iris";
+  let body =
+    `Focus Depth medio <strong>${fdAvg.toFixed(0)}/100</strong> — stato <strong>${level}</strong>. ` +
+    `Questo indice combina soppressione attenzionale del blink, coerenza del ritmo oculare ` +
+    `e assenza di rebound, confrontati con la tua baseline personale.`;
+  if (trend <= -0.8) {
+    tone = "red";
+    body += ` Il focus è <strong>calato</strong> di circa ${trend.toFixed(1)} pt/min: l'attenzione si è ` +
+      `dispersa progressivamente. Potresti aver attraversato pause cognitive o distrazioni ricorrenti.`;
+  } else if (trend >= 0.8) {
+    tone = "green";
+    body += ` Trend in <strong>crescita</strong> (+${trend.toFixed(1)} pt/min): dopo l'avvio l'attenzione ` +
+      `si è consolidata — un classico pattern di warm-up cognitivo.`;
+  } else {
+    tone = fdAvg >= 50 ? "green" : "yellow";
+    body += ` Andamento <strong>stabile</strong> (${trend >= 0 ? "+" : ""}${trend.toFixed(1)} pt/min): ` +
+      `stato attenzionale sostenuto per l'intera sessione.`;
+  }
+  return anaCard(tone, "Focus Depth — interpretazione", body);
+}
+
+function buildCognitiveFatigueCard(cfAvg, cfSlopePerMin) {
+  const level =
+    cfAvg >= 60 ? "elevata" :
+    cfAvg >= 40 ? "moderata" :
+    cfAvg >= 20 ? "lieve" : "minima";
+  const trend = cfSlopePerMin;
+  let tone = cfAvg >= 60 ? "red" : cfAvg >= 40 ? "yellow" : "green";
+  let body =
+    `Cognitive Fatigue media <strong>${cfAvg.toFixed(0)}/100</strong> — fatica <strong>${level}</strong>. ` +
+    `Aggrega la deriva temporale del blink rate, la variabilità degli intervalli inter-blink ` +
+    `e gli episodi di rebound tipici del disimpegno.`;
+  if (trend >= 0.8) {
+    tone = "red";
+    body += ` La fatica è <strong>cresciuta</strong> di circa +${trend.toFixed(1)} pt/min: chiaro accumulo ` +
+      `nel corso della sessione. È il momento ideale per una pausa di recupero (5–10 min).`;
+  } else if (trend <= -0.8) {
+    body += ` La fatica è <strong>diminuita</strong> di ${trend.toFixed(1)} pt/min: probabile ingresso ` +
+      `in uno stato di flow dopo una fase iniziale di aggiustamento.`;
+  } else {
+    body += ` Andamento piatto (${trend >= 0 ? "+" : ""}${trend.toFixed(1)} pt/min): carico cognitivo ` +
+      `costante, senza accumulo evidente.`;
+  }
+  return anaCard(tone, "Cognitive Fatigue — interpretazione", body);
+}
+
+function buildCogInsufficientCard() {
+  return anaCard("cyan", "Metriche cognitive",
+    `Sessione troppo breve o calibrazione incompleta: servono almeno 3–5 minuti di rilevamento continuo ` +
+    `con volto visibile per rendere affidabili <strong>Focus Depth</strong> e <strong>Cognitive Fatigue</strong>. ` +
+    `Le stime verranno calcolate automaticamente in sessioni più lunghe.`);
 }
 
 /* ── Cognitive metrics ── */
@@ -1241,6 +1428,15 @@ function updateCognitiveMetrics() {
   const fd = Math.round(state.cogFD * 100);
   const cf = Math.round(state.cogCF * 100);
   state.cogStateLabel = classifyState(fd, cf, elapsed_s);
+
+  state.cogHistory.push({
+    t: Date.now(),
+    fd,
+    cf,
+    fdConf: state.cogFD_conf,
+    cfConf: state.cogCF_conf,
+    st: state.cogStateLabel,
+  });
 
   renderCognitiveUI(fd, cf, elapsed_s);
 }

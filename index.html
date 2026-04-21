@@ -185,7 +185,10 @@
           <h2 class="report-title">Rapporto sessione</h2>
           <span id="reportDate" class="report-date"></span>
         </div>
-        <button id="closeReportBtn" type="button" class="report-close">Chiudi</button>
+        <div class="report-header-actions">
+          <button id="exportReportBtn" type="button" class="report-export">Esporta CSV</button>
+          <button id="closeReportBtn" type="button" class="report-close">Chiudi</button>
+        </div>
       </div>
 
       <div class="report-kpis">
@@ -208,6 +211,16 @@
         <div class="report-kpi">
           <div class="rkpi-label">Variabilità σ</div>
           <div class="rkpi-value" id="repVar">—</div>
+        </div>
+        <div class="report-kpi">
+          <div class="rkpi-label">Focus Depth medio</div>
+          <div class="rkpi-value"><span id="repFdAvg">—</span><span class="rkpi-unit">/100</span></div>
+          <div class="rkpi-sub" id="repFdTrend">—</div>
+        </div>
+        <div class="report-kpi">
+          <div class="rkpi-label">Cognitive Fatigue medio</div>
+          <div class="rkpi-value"><span id="repCfAvg">—</span><span class="rkpi-unit">/100</span></div>
+          <div class="rkpi-sub" id="repCfTrend">—</div>
         </div>
       </div>
 
