@@ -237,6 +237,37 @@
       <div id="reportAnalysis" class="report-analysis"></div>
     </section>
 
+    <!-- ── Calendar & classification ── -->
+    <section class="calendar-section">
+      <div class="cal-header">
+        <div>
+          <h2 class="cal-title">Calendario & classificazione</h2>
+          <span class="cal-sub">Associa il blink rate al tipo di attività</span>
+        </div>
+        <div class="cal-actions">
+          <label class="cal-import">
+            <input type="file" id="icsFile" accept=".ics,text/calendar" hidden />
+            <span>Importa .ics</span>
+          </label>
+          <button id="clearEventsBtn" type="button" class="danger">Cancella eventi</button>
+        </div>
+      </div>
+
+      <p class="hint-muted cal-hint">
+        Esporta un file <code>.ics</code> dal tuo calendario (Google, Apple,
+        Outlook) e trascinalo qui. Gli eventi che si sovrappongono alle
+        sessioni registrate verranno collegati automaticamente. Puoi anche
+        classificare manualmente una sessione dal menu <em>Classe</em>.
+      </p>
+
+      <div id="calEventList" class="cal-event-list"></div>
+
+      <div id="calStats" class="cal-stats" hidden>
+        <h3 class="cal-stats-title">Analisi per tipo di attività</h3>
+        <div id="calStatsBody" class="cal-stats-body"></div>
+      </div>
+    </section>
+
     <p id="status" class="status" role="status" aria-live="polite">
       <span class="pulse idle" aria-hidden="true"></span>
       <span>Pronto.</span>

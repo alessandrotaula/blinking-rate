@@ -23,7 +23,24 @@ const TICK_INTERVAL_MS = 40;
 const SESSIONS_KEY = "blinkSessions.v1";
 const MAX_STORED_SESSIONS = 20;
 const BASELINES_KEY = "blinkBaselines.v1";
+const EVENTS_KEY = "blinkCalendarEvents.v1";
 const COG_TICK_MS = 2000;
+
+const EVENT_CLASSES = [
+  { id: "business_call", label: "Business call" },
+  { id: "chill_call",    label: "Chill call" },
+  { id: "deep_work",     label: "Deep work" },
+  { id: "meeting",       label: "Riunione" },
+  { id: "other",         label: "Altro" },
+];
+const CLASS_LABEL = Object.fromEntries(EVENT_CLASSES.map(c => [c.id, c.label]));
+const CLASS_CSS_KEY = {
+  business_call: "business",
+  chill_call: "chill",
+  deep_work: "deep",
+  meeting: "meeting",
+  other: "other",
+};
 
 const el = (id) => document.getElementById(id);
 const startBtn = el("startBtn");
@@ -60,6 +77,11 @@ const repFdTrend = el("repFdTrend");
 const repCfTrend = el("repCfTrend");
 const reportAnalysis = el("reportAnalysis");
 const exportReportBtn = el("exportReportBtn");
+const icsFileInput = el("icsFile");
+const calEventList = el("calEventList");
+const clearEventsBtn = el("clearEventsBtn");
+const calStats = el("calStats");
+const calStatsBody = el("calStatsBody");
 let currentReportSession = null;
 
 const state = {
@@ -675,12 +697,14 @@ function deleteSession(id) {
   const list = loadSessions().filter((s) => s.id !== id);
   saveSessions(list);
   renderSessions();
+  renderCalendarEvents();
 }
 
 function clearAllSessions() {
   if (!confirm("Cancellare tutte le sessioni salvate?")) return;
   localStorage.removeItem(SESSIONS_KEY);
   renderSessions();
+  renderCalendarEvents();
 }
 
 function renderSessions() {
@@ -698,14 +722,30 @@ function renderSessions() {
     row.className = "session-row";
     const info = document.createElement("div");
     info.className = "session-info";
+    const tagLabelTxt = s.tag?.label ? ` · <em>${escapeHtml(s.tag.label)}</em>` : "";
     info.innerHTML = `
       <div class="s-date">${fmtDate(s.startedAt)}</div>
       <div class="s-meta">
         durata ${fmtTime(s.durationMs)} ·
         ${s.totalBlinks} blink ·
-        media ${s.avgRate.toFixed(1)}/min
+        media ${s.avgRate.toFixed(1)}/min${tagLabelTxt}
       </div>
     `;
+    const tagRow = document.createElement("div");
+    tagRow.className = "session-tag-row";
+    const lbl = document.createElement("label");
+    lbl.textContent = "Classe";
+    const sel = document.createElement("select");
+    sel.className = "session-class-select";
+    sel.innerHTML = classOptionsHtml(s.tag?.class || "");
+    sel.addEventListener("change", () => {
+      tagSessionManually(s.id, sel.value || null);
+      renderCalendarStats();
+    });
+    tagRow.appendChild(lbl);
+    tagRow.appendChild(sel);
+    info.appendChild(tagRow);
+
     const actions = document.createElement("div");
     actions.className = "session-actions";
     const dl = document.createElement("button");
@@ -813,7 +853,9 @@ function stop() {
   pipBtn.disabled = true;
   setPulse("idle", "In attesa");
   resetCognitiveUI();
+  autoMatchSessionsToEvents();
   renderSessions();
+  renderCalendarEvents();
 }
 
 previewChk.addEventListener("change", () => {
@@ -1495,3 +1537,300 @@ function resetCognitiveUI() {
   const stEl = document.getElementById("stateLabel");
   if (stEl) { stEl.textContent = "In attesa"; stEl.className = "state-badge state-idle"; }
 }
+
+/* ── Calendar integration ── */
+
+function loadEvents() {
+  try {
+    const raw = localStorage.getItem(EVENTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+function saveEvents(list) {
+  try { localStorage.setItem(EVENTS_KEY, JSON.stringify(list)); } catch {}
+}
+
+/* Minimal ICS parser — handles VEVENT with SUMMARY / DTSTART / DTEND / UID.
+   Supports basic DATE-TIME (UTC 'Z' and local) and all-day DATE values.
+   Ignores recurrences beyond the first instance. */
+function parseIcsDate(val, params) {
+  if (!val) return null;
+  const isDate = /VALUE=DATE/i.test(params || "") || /^\d{8}$/.test(val);
+  if (isDate) {
+    const y = +val.slice(0, 4), m = +val.slice(4, 6) - 1, d = +val.slice(6, 8);
+    return new Date(y, m, d).getTime();
+  }
+  const m = val.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?$/);
+  if (!m) return null;
+  const [, Y, Mo, D, H, Mi, S, Z] = m;
+  if (Z) return Date.UTC(+Y, +Mo - 1, +D, +H, +Mi, +S);
+  return new Date(+Y, +Mo - 1, +D, +H, +Mi, +S).getTime();
+}
+
+function parseIcs(text) {
+  const raw = text.replace(/\r\n/g, "\n");
+  const unfolded = raw.replace(/\n[ \t]/g, "");
+  const lines = unfolded.split("\n");
+  const events = [];
+  let cur = null;
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") { cur = {}; continue; }
+    if (line === "END:VEVENT") {
+      if (cur && cur.start && cur.end && cur.end > cur.start) {
+        events.push({
+          uid: cur.uid || ("ev_" + cur.start + "_" + Math.random().toString(36).slice(2, 8)),
+          title: cur.title || "(senza titolo)",
+          start: cur.start,
+          end: cur.end,
+          classTag: null,
+        });
+      }
+      cur = null;
+      continue;
+    }
+    if (!cur) continue;
+    const idx = line.indexOf(":");
+    if (idx < 0) continue;
+    const head = line.slice(0, idx);
+    const val  = line.slice(idx + 1);
+    const [name, ...paramParts] = head.split(";");
+    const params = paramParts.join(";");
+    switch (name) {
+      case "SUMMARY": cur.title = val.replace(/\\,/g, ",").replace(/\\n/gi, " "); break;
+      case "UID":     cur.uid = val; break;
+      case "DTSTART": cur.start = parseIcsDate(val, params); break;
+      case "DTEND":   cur.end   = parseIcsDate(val, params); break;
+    }
+  }
+  return events;
+}
+
+function matchSessionForEvent(event, sessions) {
+  for (const s of sessions) {
+    const sStart = s.startedAt;
+    const sEnd = s.endedAt || (s.startedAt + (s.durationMs || 0));
+    const overlapStart = Math.max(sStart, event.start);
+    const overlapEnd = Math.min(sEnd, event.end);
+    const overlap = overlapEnd - overlapStart;
+    if (overlap > 0 && overlap >= Math.min(60000, (sEnd - sStart) * 0.25)) {
+      return s;
+    }
+  }
+  return null;
+}
+
+function classOptionsHtml(selected) {
+  let html = `<option value="">— classifica —</option>`;
+  for (const c of EVENT_CLASSES) {
+    html += `<option value="${c.id}"${c.id === selected ? " selected" : ""}>${c.label}</option>`;
+  }
+  return html;
+}
+
+function fmtEventTime(ev) {
+  const s = new Date(ev.start);
+  const e = new Date(ev.end);
+  const sameDay = s.toDateString() === e.toDateString();
+  const d = s.toLocaleDateString();
+  const pad = (n) => String(n).padStart(2, "0");
+  const hm = (x) => `${pad(x.getHours())}:${pad(x.getMinutes())}`;
+  return sameDay ? `${d} · ${hm(s)}–${hm(e)}` : `${d} ${hm(s)} → ${e.toLocaleDateString()} ${hm(e)}`;
+}
+
+function renderCalendarEvents() {
+  const events = loadEvents().sort((a, b) => b.start - a.start);
+  const sessions = loadSessions();
+  calEventList.innerHTML = "";
+  if (!events.length) {
+    const p = document.createElement("p");
+    p.className = "cal-empty";
+    p.textContent = "Nessun evento importato. Carica un file .ics per iniziare.";
+    calEventList.appendChild(p);
+    renderCalendarStats();
+    return;
+  }
+  for (const ev of events) {
+    const matched = matchSessionForEvent(ev, sessions);
+    const row = document.createElement("div");
+    row.className = "cal-event-row " + (matched ? "matched" : "no-match");
+    const effectiveClass = ev.classTag || (matched?.tag?.class) || "";
+
+    const info = document.createElement("div");
+    info.className = "cev-info";
+    info.innerHTML = `
+      <div class="cev-title">${escapeHtml(ev.title)}</div>
+      <div class="cev-meta">${fmtEventTime(ev)}</div>
+      ${matched
+        ? `<div class="cev-match">✓ collegato a sessione ${fmtDate(matched.startedAt)} · media ${matched.avgRate.toFixed(1)}/min</div>`
+        : `<div class="cev-no-match">nessuna sessione sovrapposta</div>`}
+    `;
+
+    const select = document.createElement("select");
+    select.className = "cev-class-select";
+    select.innerHTML = classOptionsHtml(effectiveClass);
+    select.addEventListener("change", () => {
+      updateEventClass(ev.uid, select.value || null);
+      if (matched) {
+        tagSessionFromEvent(matched.id, select.value || null, ev.title);
+      }
+      renderCalendarEvents();
+      renderSessions();
+    });
+
+    const del = document.createElement("button");
+    del.className = "cev-del";
+    del.textContent = "✕";
+    del.title = "Rimuovi evento";
+    del.addEventListener("click", () => {
+      const next = loadEvents().filter(e => e.uid !== ev.uid);
+      saveEvents(next);
+      renderCalendarEvents();
+    });
+
+    row.appendChild(info);
+    row.appendChild(select);
+    row.appendChild(del);
+    calEventList.appendChild(row);
+  }
+  renderCalendarStats();
+}
+
+function updateEventClass(uid, classTag) {
+  const list = loadEvents();
+  const ev = list.find(e => e.uid === uid);
+  if (!ev) return;
+  ev.classTag = classTag;
+  saveEvents(list);
+}
+
+function tagSessionFromEvent(sessionId, classTag, eventTitle) {
+  const sessions = loadSessions();
+  const s = sessions.find(x => x.id === sessionId);
+  if (!s) return;
+  s.tag = {
+    class: classTag,
+    label: eventTitle || s.tag?.label || null,
+    source: "ics",
+  };
+  saveSessions(sessions);
+}
+
+function tagSessionManually(sessionId, classTag) {
+  const sessions = loadSessions();
+  const s = sessions.find(x => x.id === sessionId);
+  if (!s) return;
+  s.tag = {
+    class: classTag || null,
+    label: s.tag?.label || null,
+    source: "manual",
+  };
+  saveSessions(sessions);
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+function sessionCogAverages(s) {
+  const cog = (s.cogSamples || []).filter(c =>
+    Number.isFinite(c.fd) && Number.isFinite(c.cf) && (c.fdConf ?? 0) >= 0.35
+  );
+  if (!cog.length) return { fd: null, cf: null };
+  const fd = cog.reduce((a, b) => a + b.fd, 0) / cog.length;
+  const cf = cog.reduce((a, b) => a + b.cf, 0) / cog.length;
+  return { fd, cf };
+}
+
+function renderCalendarStats() {
+  const sessions = loadSessions().filter(s => s.tag && s.tag.class);
+  if (!sessions.length) {
+    calStats.hidden = true;
+    return;
+  }
+  const byClass = {};
+  for (const s of sessions) {
+    const k = s.tag.class;
+    byClass[k] ||= [];
+    byClass[k].push(s);
+  }
+  calStatsBody.innerHTML = "";
+  for (const c of EVENT_CLASSES) {
+    const list = byClass[c.id];
+    if (!list || !list.length) continue;
+    const rates = list.map(s => s.avgRate);
+    const avg = rates.reduce((a, b) => a + b, 0) / rates.length;
+    const sd = stddev(rates);
+    const fdVals = [], cfVals = [];
+    for (const s of list) {
+      const ca = sessionCogAverages(s);
+      if (ca.fd != null) fdVals.push(ca.fd);
+      if (ca.cf != null) cfVals.push(ca.cf);
+    }
+    const fdAvg = fdVals.length ? fdVals.reduce((a, b) => a + b, 0) / fdVals.length : null;
+    const cfAvg = cfVals.length ? cfVals.reduce((a, b) => a + b, 0) / cfVals.length : null;
+
+    const card = document.createElement("div");
+    card.className = "class-stat cs-" + CLASS_CSS_KEY[c.id];
+    card.innerHTML = `
+      <div class="cs-label">${c.label} · ${list.length} sess.</div>
+      <div class="cs-row"><span>Rate medio</span><strong>${avg.toFixed(1)}/min</strong></div>
+      <div class="cs-row"><span>Variabilità σ</span><strong>${sd.toFixed(2)}</strong></div>
+      <div class="cs-row"><span>Focus Depth</span><strong>${fdAvg != null ? fdAvg.toFixed(0) + "/100" : "—"}</strong></div>
+      <div class="cs-row"><span>Cognitive Fatigue</span><strong>${cfAvg != null ? cfAvg.toFixed(0) + "/100" : "—"}</strong></div>
+    `;
+    calStatsBody.appendChild(card);
+  }
+  calStats.hidden = calStatsBody.children.length === 0;
+}
+
+icsFileInput?.addEventListener("change", async () => {
+  const file = icsFileInput.files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = parseIcs(text);
+    if (!parsed.length) {
+      setStatus("Nessun evento trovato nel file .ics.", true);
+    } else {
+      const existing = loadEvents();
+      const byUid = new Map(existing.map(e => [e.uid, e]));
+      for (const ev of parsed) {
+        if (!byUid.has(ev.uid)) byUid.set(ev.uid, ev);
+      }
+      saveEvents([...byUid.values()]);
+      setStatus(`Importati ${parsed.length} eventi dal calendario.`);
+      autoMatchSessionsToEvents();
+      renderCalendarEvents();
+      renderSessions();
+    }
+  } catch (e) {
+    setStatus("Errore lettura .ics: " + e.message, true);
+  } finally {
+    icsFileInput.value = "";
+  }
+});
+
+function autoMatchSessionsToEvents() {
+  const events = loadEvents();
+  const sessions = loadSessions();
+  let dirty = false;
+  for (const ev of events) {
+    if (!ev.classTag) continue;
+    const matched = matchSessionForEvent(ev, sessions);
+    if (matched && (!matched.tag || matched.tag.source !== "manual")) {
+      matched.tag = { class: ev.classTag, label: ev.title, source: "ics" };
+      dirty = true;
+    }
+  }
+  if (dirty) saveSessions(sessions);
+}
+
+clearEventsBtn?.addEventListener("click", () => {
+  if (!confirm("Cancellare tutti gli eventi importati?")) return;
+  saveEvents([]);
+  renderCalendarEvents();
+});
+
+renderCalendarEvents();
