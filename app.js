@@ -30,8 +30,8 @@ const EVENT_CLASSES = [
   { id: "business_call", label: "Business call" },
   { id: "chill_call",    label: "Chill call" },
   { id: "deep_work",     label: "Deep work" },
-  { id: "meeting",       label: "Riunione" },
-  { id: "other",         label: "Altro" },
+  { id: "meeting",       label: "Meeting" },
+  { id: "other",         label: "Other" },
 ];
 const CLASS_LABEL = Object.fromEntries(EVENT_CLASSES.map(c => [c.id, c.label]));
 const CLASS_CSS_KEY = {
@@ -149,7 +149,7 @@ function setPulse(mode, label) {
 }
 
 async function loadLandmarker() {
-  setStatus("Carico modello di face landmark…");
+  setStatus("Loading face landmark model…");
   const vision = await FilesetResolver.forVisionTasks(WASM_URL);
   state.landmarker = await FaceLandmarker.createFromOptions(vision, {
     baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
@@ -235,7 +235,7 @@ function processFrame() {
         state.eyesClosed = false;
         state.lastResumedAt = nowEpoch;
         state.activeSupprStart = null;
-        setStatus("Ripreso — volto rilevato.");
+        setStatus("Resumed — face detected.");
         setPulse("live", "Live");
       } else {
         return;
@@ -248,8 +248,8 @@ function processFrame() {
       state.paused = true;
       state.pauseStartedAt = state.lastFaceSeenAt;
       state.eyesClosed = false;
-      setStatus("In pausa — nessun volto rilevato.");
-      setPulse("err", "In pausa");
+      setStatus("Paused — no face detected.");
+      setPulse("err", "Paused");
     }
     if (state.paused) return;
   }
@@ -336,7 +336,7 @@ function updateUI() {
   sessionRateVal.textContent = rateSession.toFixed(1);
   varVal.textContent = varSession.toFixed(2);
   totalVal.textContent = String(state.totalBlinks);
-  sessionVal.textContent = fmtTime(activeMs) + (state.paused ? " · in pausa" : "");
+  sessionVal.textContent = fmtTime(activeMs) + (state.paused ? " · paused" : "");
   drawChart();
   drawPipCanvas(rate5m);
 
@@ -493,11 +493,11 @@ async function toggleWakeLock() {
     try { await state.wakeLock.release(); } catch {}
     state.wakeLock = null;
     wakeBtn.setAttribute("aria-pressed", "false");
-    setStatus("Screen wake lock disattivato.");
+    setStatus("Screen wake lock disabled.");
     return;
   }
   if (!("wakeLock" in navigator)) {
-    setStatus("Wake Lock non supportato dal browser.", true);
+    setStatus("Wake Lock not supported by this browser.", true);
     return;
   }
   try {
@@ -506,9 +506,9 @@ async function toggleWakeLock() {
       wakeBtn.setAttribute("aria-pressed", "false");
     });
     wakeBtn.setAttribute("aria-pressed", "true");
-    setStatus("Schermo tenuto attivo.");
+    setStatus("Screen kept awake.");
   } catch (e) {
-    setStatus("Wake lock fallito: " + e.message, true);
+    setStatus("Wake lock failed: " + e.message, true);
   }
 }
 
@@ -530,7 +530,7 @@ async function togglePip() {
     });
     state.pipVideo = pipVideo;
   } catch (e) {
-    setStatus("Picture-in-Picture non disponibile: " + e.message, true);
+    setStatus("Picture-in-Picture not available: " + e.message, true);
   }
 }
 
@@ -549,7 +549,7 @@ function saveSessions(list) {
   try {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
   } catch (e) {
-    setStatus("Impossibile salvare in localStorage: " + e.message, true);
+    setStatus("Unable to save to localStorage: " + e.message, true);
   }
 }
 
@@ -674,7 +674,7 @@ function downloadSession(s) {
 function exportAllSessions() {
   const sessions = loadSessions();
   if (!sessions.length) {
-    setStatus("Nessuna sessione salvata.", true);
+    setStatus("No saved sessions.", true);
     return;
   }
   const lines = [
@@ -701,7 +701,7 @@ function deleteSession(id) {
 }
 
 function clearAllSessions() {
-  if (!confirm("Cancellare tutte le sessioni salvate?")) return;
+  if (!confirm("Delete all saved sessions?")) return;
   localStorage.removeItem(SESSIONS_KEY);
   renderSessions();
   renderCalendarEvents();
@@ -713,7 +713,7 @@ function renderSessions() {
   if (!sessions.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "Nessuna sessione registrata.";
+    empty.textContent = "No sessions recorded.";
     sessionList.appendChild(empty);
     return;
   }
@@ -726,15 +726,15 @@ function renderSessions() {
     info.innerHTML = `
       <div class="s-date">${fmtDate(s.startedAt)}</div>
       <div class="s-meta">
-        durata ${fmtTime(s.durationMs)} ·
-        ${s.totalBlinks} blink ·
-        media ${s.avgRate.toFixed(1)}/min${tagLabelTxt}
+        duration ${fmtTime(s.durationMs)} ·
+        ${s.totalBlinks} blinks ·
+        avg ${s.avgRate.toFixed(1)}/min${tagLabelTxt}
       </div>
     `;
     const tagRow = document.createElement("div");
     tagRow.className = "session-tag-row";
     const lbl = document.createElement("label");
-    lbl.textContent = "Classe";
+    lbl.textContent = "Class";
     const sel = document.createElement("select");
     sel.className = "session-class-select";
     sel.innerHTML = classOptionsHtml(s.tag?.class || "");
@@ -752,7 +752,7 @@ function renderSessions() {
     dl.textContent = "CSV";
     dl.addEventListener("click", () => downloadSession(s));
     const del = document.createElement("button");
-    del.textContent = "Elimina";
+    del.textContent = "Delete";
     del.className = "danger";
     del.addEventListener("click", () => deleteSession(s.id));
     actions.appendChild(dl);
@@ -769,7 +769,7 @@ async function start() {
     if (!state.landmarker) await loadLandmarker();
     await startCamera();
   } catch (e) {
-    setStatus("Impossibile avviare: " + e.message, true);
+    setStatus("Unable to start: " + e.message, true);
     startBtn.disabled = false;
     return;
   }
@@ -816,7 +816,7 @@ async function start() {
 
   stopBtn.disabled = false;
   pipBtn.disabled = !("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled;
-  setStatus("In esecuzione — la detection continua anche cambiando tab.");
+  setStatus("Running — detection continues even when you switch tabs.");
   setPulse("live", "Live");
 }
 
@@ -843,15 +843,15 @@ function stop() {
   stopCamera();
   if (saved) {
     downloadSession(saved);
-    setStatus(`Sessione salvata (${saved.totalBlinks} blink in ${fmtTime(saved.durationMs)}). CSV scaricato.`);
+    setStatus(`Session saved (${saved.totalBlinks} blinks in ${fmtTime(saved.durationMs)}). CSV downloaded.`);
     generateReport(saved);
   } else {
-    setStatus("Fermato.");
+    setStatus("Stopped.");
   }
   startBtn.disabled = false;
   stopBtn.disabled = true;
   pipBtn.disabled = true;
-  setPulse("idle", "In attesa");
+  setPulse("idle", "Idle");
   resetCognitiveUI();
   autoMatchSessionsToEvents();
   renderSessions();
@@ -869,7 +869,7 @@ autoPauseChk.addEventListener("change", () => {
     state.eyesClosed = false;
     state.lastResumedAt = Date.now();
     state.activeSupprStart = null;
-    setStatus("Auto-pausa disattivata — ripreso.");
+    setStatus("Auto-pause disabled — resumed.");
     setPulse("live", "Live");
   }
 });
@@ -900,7 +900,7 @@ el("closeReportBtn").addEventListener("click", () => {
 
 exportReportBtn?.addEventListener("click", () => {
   if (!currentReportSession) {
-    setStatus("Nessun report disponibile da esportare.", true);
+    setStatus("No report available to export.", true);
     return;
   }
   const csv = reportToCSV(currentReportSession);
@@ -951,7 +951,7 @@ function cogStats(session) {
 function trendTxt(slopePerMin, unit = "") {
   const s = slopePerMin;
   const abs = Math.abs(s);
-  if (abs < 0.3) return `→ stabile (${s >= 0 ? "+" : ""}${s.toFixed(2)}${unit}/min)`;
+  if (abs < 0.3) return `→ stable (${s >= 0 ? "+" : ""}${s.toFixed(2)}${unit}/min)`;
   if (s > 0) return `↑ +${s.toFixed(2)}${unit}/min`;
   return `↓ ${s.toFixed(2)}${unit}/min`;
 }
@@ -980,7 +980,7 @@ function generateReport(session) {
 
   const trendLabel =
     slopePerMin > 0.4 ? `↑ +${slopePerMin.toFixed(1)}/min` :
-    slopePerMin < -0.4 ? `↓ ${slopePerMin.toFixed(1)}/min` : "→ stabile";
+    slopePerMin < -0.4 ? `↓ ${slopePerMin.toFixed(1)}/min` : "→ stable";
   repTrend.textContent = trendLabel;
   reportDate.textContent = fmtDate(session.startedAt);
 
@@ -993,8 +993,8 @@ function generateReport(session) {
   } else {
     repFdAvg.textContent = "—";
     repCfAvg.textContent = "—";
-    repFdTrend.textContent = "dati insufficienti";
-    repCfTrend.textContent = "dati insufficienti";
+    repFdTrend.textContent = "insufficient data";
+    repCfTrend.textContent = "insufficient data";
   }
 
   const peakIdx   = rates.indexOf(maxRate);
@@ -1122,136 +1122,136 @@ function anaCard(dotClass, title, body) {
 
 function buildFocusCard(avg) {
   if (avg < 8)
-    return anaCard("red", "Concentrazione intensa",
-      `Rate medio <strong>${avg.toFixed(1)}/min</strong>, ben al di sotto della norma (12–20/min). ` +
-      `Questo indica un focus molto profondo — o una fissazione prolungata che riduce il riflesso di ammiccamento. ` +
-      `La riduzione del blink rate accelera l'evaporazione del film lacrimale: fai pause visive frequenti.`);
+    return anaCard("red", "Intense concentration",
+      `Average rate <strong>${avg.toFixed(1)}/min</strong>, well below the norm (12–20/min). ` +
+      `This indicates very deep focus — or prolonged fixation that suppresses the blink reflex. ` +
+      `A reduced blink rate accelerates tear film evaporation: take frequent visual breaks.`);
   if (avg < 12)
-    return anaCard("yellow", "Stato di focus elevato",
-      `Rate medio <strong>${avg.toFixed(1)}/min</strong>: inferiore alla media fisiologica a riposo. ` +
-      `Tipico di attività cognitivamente impegnative come lettura, coding o analisi. ` +
-      `Considera la regola 20-20-20: ogni 20 minuti, guarda a 6 m di distanza per 20 secondi.`);
+    return anaCard("yellow", "High focus state",
+      `Average rate <strong>${avg.toFixed(1)}/min</strong>: below the resting physiological baseline. ` +
+      `Typical of cognitively demanding activities such as reading, coding or analysis. ` +
+      `Consider the 20-20-20 rule: every 20 minutes, look at something 20 feet (6 m) away for 20 seconds.`);
   if (avg < 20)
-    return anaCard("green", "Rate fisiologico normale",
-      `Rate medio <strong>${avg.toFixed(1)}/min</strong>: nel range sano (12–20/min). ` +
-      `Nessun segnale di sovraccarico — mente e occhi in equilibrio durante la sessione.`);
-  return anaCard("red", "Segnali di affaticamento",
-    `Rate medio <strong>${avg.toFixed(1)}/min</strong>, oltre la norma a riposo. ` +
-    `Un tasso elevato può indicare affaticamento visivo, secchezza oculare o stress prolungato. ` +
-    `Controlla luminosità, postura e considera una pausa più lunga.`);
+    return anaCard("green", "Normal physiological rate",
+      `Average rate <strong>${avg.toFixed(1)}/min</strong>: within the healthy range (12–20/min). ` +
+      `No signs of overload — mind and eyes in balance throughout the session.`);
+  return anaCard("red", "Signs of strain",
+    `Average rate <strong>${avg.toFixed(1)}/min</strong>, above the resting norm. ` +
+    `A high rate can indicate visual strain, dry eyes or prolonged stress. ` +
+    `Check brightness, posture, and consider a longer break.`);
 }
 
 function buildTrendCard(slopePerMin) {
   if (Math.abs(slopePerMin) < 0.4)
-    return anaCard("green", "Andamento stabile",
-      `Trendline quasi piatta (<strong>${slopePerMin >= 0 ? "+" : ""}${slopePerMin.toFixed(2)}/min·min</strong>). ` +
-      `Stato cognitivo uniforme e sostenuto — ottima coerenza attentiva per tutta la sessione.`);
+    return anaCard("green", "Stable trend",
+      `Nearly flat trendline (<strong>${slopePerMin >= 0 ? "+" : ""}${slopePerMin.toFixed(2)}/min·min</strong>). ` +
+      `Uniform, sustained cognitive state — excellent attentional coherence throughout the session.`);
   if (slopePerMin > 0)
-    return anaCard("red", "Affaticamento progressivo",
-      `Il blink rate è aumentato di circa <strong>+${slopePerMin.toFixed(1)}/min</strong> per ogni minuto trascorso. ` +
-      `Trend crescente = accumulo di fatica cognitiva e visiva. ` +
-      `Prova la tecnica Pomodoro: 25 min lavoro + 5 min pausa per spezzare l'accumulo.`);
-  return anaCard("iris", "Approfondimento del focus",
-    `Il blink rate è calato di circa <strong>${slopePerMin.toFixed(1)}/min</strong> per minuto. ` +
-    `Un trend decrescente riflette il classico warm-up cognitivo: dopo una fase iniziale di orientamento, ` +
-    `l'attenzione si è consolidata e approfondita progressivamente.`);
+    return anaCard("red", "Progressive fatigue",
+      `Blink rate rose by about <strong>+${slopePerMin.toFixed(1)}/min</strong> per minute elapsed. ` +
+      `An upward trend = accumulating cognitive and visual fatigue. ` +
+      `Try the Pomodoro technique: 25 min of work + 5 min break to break the buildup.`);
+  return anaCard("iris", "Deepening focus",
+    `Blink rate dropped by about <strong>${slopePerMin.toFixed(1)}/min</strong> per minute. ` +
+    `A downward trend reflects the classic cognitive warm-up: after an initial orientation phase, ` +
+    `attention consolidated and deepened progressively.`);
 }
 
 function buildVarCard(sd) {
   if (sd < 2)
-    return anaCard("green", "Stato cognitivo consistente",
-      `Variabilità <strong>σ = ${sd.toFixed(2)}</strong> — molto bassa. ` +
-      `Il blink rate è rimasto stabile: nessuna distrazione evidente nel pattern motorio oculare, ` +
-      `attenzione omogenea e sostenuta.`);
+    return anaCard("green", "Consistent cognitive state",
+      `Variability <strong>σ = ${sd.toFixed(2)}</strong> — very low. ` +
+      `Blink rate stayed stable: no clear distractions in the oculomotor pattern, ` +
+      `homogeneous and sustained attention.`);
   if (sd < 5)
-    return anaCard("yellow", "Variabilità normale",
-      `Variabilità <strong>σ = ${sd.toFixed(2)}</strong>. ` +
-      `Oscillazioni fisiologiche che riflettono i naturali cicli di attenzione ultradiani (~90 min), ` +
-      `micro-pause cognitive e transizioni tra sotto-compiti.`);
-  return anaCard("red", "Alta variabilità",
-    `Variabilità <strong>σ = ${sd.toFixed(2)}</strong> — elevata. ` +
-    `Suggerisce interruzioni frequenti, distrazioni esterne o forti transizioni di stato. ` +
-    `Sessioni dedicate a un singolo compito in ambienti a bassa distrazione tendono a ridurla.`);
+    return anaCard("yellow", "Normal variability",
+      `Variability <strong>σ = ${sd.toFixed(2)}</strong>. ` +
+      `Physiological oscillations reflecting natural ultradian attention cycles (~90 min), ` +
+      `cognitive micro-breaks and sub-task transitions.`);
+  return anaCard("red", "High variability",
+    `Variability <strong>σ = ${sd.toFixed(2)}</strong> — elevated. ` +
+    `Suggests frequent interruptions, external distractions or strong state transitions. ` +
+    `Single-task sessions in low-distraction environments tend to reduce it.`);
 }
 
 function buildPeaksCard(minRate, maxRate, valleyMin, peakMin) {
-  return anaCard("cyan", "Momenti notevoli",
-    `<strong>Picco massimo:</strong> ${maxRate.toFixed(1)}/min al minuto ${peakMin} ` +
-    `— probabile picco di stress, distrazione o cambio di attività.<br>` +
-    `<strong>Minimo registrato:</strong> ${minRate.toFixed(1)}/min al minuto ${valleyMin} ` +
-    `— finestra di massima concentrazione della sessione.`);
+  return anaCard("cyan", "Notable moments",
+    `<strong>Peak:</strong> ${maxRate.toFixed(1)}/min at minute ${peakMin} ` +
+    `— likely a spike of stress, distraction or activity change.<br>` +
+    `<strong>Lowest:</strong> ${minRate.toFixed(1)}/min at minute ${valleyMin} ` +
+    `— window of maximum concentration during the session.`);
 }
 
 function buildEyeHealthCard(avg, sd) {
   const risk = avg < 8 || (avg < 12 && sd > 4);
   return anaCard(risk ? "yellow" : "green",
-    "Salute oculare",
+    "Eye health",
     risk
-      ? `Con <strong>${avg.toFixed(1)}/min</strong> sei sotto la soglia raccomandata per il comfort visivo. ` +
-        `La riduzione del blink diminuisce la lubrificazione della cornea (sindrome dell'occhio secco da schermo). ` +
-        `Usa collirio lubrificante se necessario, e tieni lo schermo leggermente sotto il livello degli occhi.`
-      : `<strong>${avg.toFixed(1)}/min</strong> è compatibile con una buona idratazione oculare. ` +
-        `Mantieni una distanza di almeno 50–70 cm dallo schermo e fai pause visive periodiche ` +
-        `per ridurre lo sforzo accomodativo.`);
+      ? `With <strong>${avg.toFixed(1)}/min</strong> you're below the recommended threshold for visual comfort. ` +
+        `Reduced blinking decreases corneal lubrication (computer-vision dry-eye syndrome). ` +
+        `Use lubricating eye drops if needed, and keep your screen slightly below eye level.`
+      : `<strong>${avg.toFixed(1)}/min</strong> is compatible with good ocular hydration. ` +
+        `Keep a distance of at least 50–70 cm from the screen and take periodic visual breaks ` +
+        `to reduce accommodative strain.`);
 }
 
 function buildFocusDepthCard(fdAvg, fdSlopePerMin) {
   const level =
-    fdAvg >= 70 ? "profondo" :
-    fdAvg >= 50 ? "stabile"  :
-    fdAvg >= 35 ? "superficiale" : "disimpegnato";
+    fdAvg >= 70 ? "deep" :
+    fdAvg >= 50 ? "stable"  :
+    fdAvg >= 35 ? "shallow" : "disengaged";
   const trend = fdSlopePerMin;
   let tone = "iris";
   let body =
-    `Focus Depth medio <strong>${fdAvg.toFixed(0)}/100</strong> — stato <strong>${level}</strong>. ` +
-    `Questo indice combina soppressione attenzionale del blink, coerenza del ritmo oculare ` +
-    `e assenza di rebound, confrontati con la tua baseline personale.`;
+    `Average Focus Depth <strong>${fdAvg.toFixed(0)}/100</strong> — state: <strong>${level}</strong>. ` +
+    `This index combines attentional blink suppression, ocular rhythm coherence ` +
+    `and absence of rebound, compared against your personal baseline.`;
   if (trend <= -0.8) {
     tone = "red";
-    body += ` Il focus è <strong>calato</strong> di circa ${trend.toFixed(1)} pt/min: l'attenzione si è ` +
-      `dispersa progressivamente. Potresti aver attraversato pause cognitive o distrazioni ricorrenti.`;
+    body += ` Focus has <strong>declined</strong> by about ${trend.toFixed(1)} pt/min: attention ` +
+      `dispersed progressively. You may have experienced cognitive lapses or recurring distractions.`;
   } else if (trend >= 0.8) {
     tone = "green";
-    body += ` Trend in <strong>crescita</strong> (+${trend.toFixed(1)} pt/min): dopo l'avvio l'attenzione ` +
-      `si è consolidata — un classico pattern di warm-up cognitivo.`;
+    body += ` <strong>Upward</strong> trend (+${trend.toFixed(1)} pt/min): after the start, attention ` +
+      `consolidated — a classic cognitive warm-up pattern.`;
   } else {
     tone = fdAvg >= 50 ? "green" : "yellow";
-    body += ` Andamento <strong>stabile</strong> (${trend >= 0 ? "+" : ""}${trend.toFixed(1)} pt/min): ` +
-      `stato attenzionale sostenuto per l'intera sessione.`;
+    body += ` <strong>Stable</strong> trajectory (${trend >= 0 ? "+" : ""}${trend.toFixed(1)} pt/min): ` +
+      `attentional state sustained through the entire session.`;
   }
-  return anaCard(tone, "Focus Depth — interpretazione", body);
+  return anaCard(tone, "Focus Depth — interpretation", body);
 }
 
 function buildCognitiveFatigueCard(cfAvg, cfSlopePerMin) {
   const level =
-    cfAvg >= 60 ? "elevata" :
-    cfAvg >= 40 ? "moderata" :
-    cfAvg >= 20 ? "lieve" : "minima";
+    cfAvg >= 60 ? "high" :
+    cfAvg >= 40 ? "moderate" :
+    cfAvg >= 20 ? "mild" : "minimal";
   const trend = cfSlopePerMin;
   let tone = cfAvg >= 60 ? "red" : cfAvg >= 40 ? "yellow" : "green";
   let body =
-    `Cognitive Fatigue media <strong>${cfAvg.toFixed(0)}/100</strong> — fatica <strong>${level}</strong>. ` +
-    `Aggrega la deriva temporale del blink rate, la variabilità degli intervalli inter-blink ` +
-    `e gli episodi di rebound tipici del disimpegno.`;
+    `Average Cognitive Fatigue <strong>${cfAvg.toFixed(0)}/100</strong> — fatigue: <strong>${level}</strong>. ` +
+    `Aggregates temporal drift of blink rate, inter-blink interval variability ` +
+    `and rebound episodes typical of disengagement.`;
   if (trend >= 0.8) {
     tone = "red";
-    body += ` La fatica è <strong>cresciuta</strong> di circa +${trend.toFixed(1)} pt/min: chiaro accumulo ` +
-      `nel corso della sessione. È il momento ideale per una pausa di recupero (5–10 min).`;
+    body += ` Fatigue <strong>grew</strong> by about +${trend.toFixed(1)} pt/min: clear buildup ` +
+      `through the session. This is the ideal moment for a recovery break (5–10 min).`;
   } else if (trend <= -0.8) {
-    body += ` La fatica è <strong>diminuita</strong> di ${trend.toFixed(1)} pt/min: probabile ingresso ` +
-      `in uno stato di flow dopo una fase iniziale di aggiustamento.`;
+    body += ` Fatigue <strong>decreased</strong> by ${trend.toFixed(1)} pt/min: likely entry ` +
+      `into a flow state after an initial adjustment phase.`;
   } else {
-    body += ` Andamento piatto (${trend >= 0 ? "+" : ""}${trend.toFixed(1)} pt/min): carico cognitivo ` +
-      `costante, senza accumulo evidente.`;
+    body += ` Flat trend (${trend >= 0 ? "+" : ""}${trend.toFixed(1)} pt/min): steady cognitive load, ` +
+      `no evident accumulation.`;
   }
-  return anaCard(tone, "Cognitive Fatigue — interpretazione", body);
+  return anaCard(tone, "Cognitive Fatigue — interpretation", body);
 }
 
 function buildCogInsufficientCard() {
-  return anaCard("cyan", "Metriche cognitive",
-    `Sessione troppo breve o calibrazione incompleta: servono almeno 3–5 minuti di rilevamento continuo ` +
-    `con volto visibile per rendere affidabili <strong>Focus Depth</strong> e <strong>Cognitive Fatigue</strong>. ` +
-    `Le stime verranno calcolate automaticamente in sessioni più lunghe.`);
+  return anaCard("cyan", "Cognitive metrics",
+    `Session too short or calibration incomplete: at least 3–5 minutes of continuous monitoring ` +
+    `with a visible face are needed for reliable <strong>Focus Depth</strong> and <strong>Cognitive Fatigue</strong>. ` +
+    `Estimates will be computed automatically in longer sessions.`);
 }
 
 /* ── Cognitive metrics ── */
@@ -1418,14 +1418,14 @@ function computeCognitiveFatigue(elapsed_s) {
 }
 
 const STATE_LABELS = {
-  deep:       "Focus profondo",
-  stable:     "Focus stabile",
+  deep:       "Deep focus",
+  stable:     "Stable focus",
   drifting:   "Drifting",
-  fatigue:    "Affaticamento",
+  fatigue:    "Fatigue",
   rebound:    "Rebound",
-  disengaged: "Disimpegnato",
-  calib:      "Calibrazione…",
-  idle:       "In attesa",
+  disengaged: "Disengaged",
+  calib:      "Calibrating…",
+  idle:       "Idle",
 };
 
 function classifyState(fd, cf, elapsed_s) {
@@ -1500,7 +1500,7 @@ function renderCognitiveUI(fd, cf, elapsed_s) {
   if (calibrating || fdLow) {
     fdEl.textContent = "—";
     fdBar.style.width = "0%";
-    fdConf.textContent = calibrating ? "calibrazione in corso…" : "dati insufficienti";
+    fdConf.textContent = calibrating ? "calibration in progress…" : "insufficient data";
   } else {
     fdEl.textContent = String(fd);
     fdBar.style.width = fd + "%";
@@ -1510,7 +1510,7 @@ function renderCognitiveUI(fd, cf, elapsed_s) {
   if (calibrating || cfLow) {
     cfEl.textContent = "—";
     cfBar.style.width = "0%";
-    cfConf.textContent = calibrating ? "calibrazione in corso…" : elapsed_s < 180 ? "disponibile dopo 3 min" : "dati insufficienti";
+    cfConf.textContent = calibrating ? "calibration in progress…" : elapsed_s < 180 ? "available after 3 min" : "insufficient data";
   } else {
     cfEl.textContent = String(cf);
     cfBar.style.width = cf + "%";
@@ -1528,14 +1528,14 @@ function resetCognitiveUI() {
   const ids = ["fdVal", "cfVal", "fdConf", "cfConf"];
   ids.forEach(id => {
     const el2 = document.getElementById(id);
-    if (el2) el2.textContent = id.endsWith("Val") ? "—" : "in attesa";
+    if (el2) el2.textContent = id.endsWith("Val") ? "—" : "waiting";
   });
   ["fdBar", "cfBar"].forEach(id => {
     const el2 = document.getElementById(id);
     if (el2) el2.style.width = "0%";
   });
   const stEl = document.getElementById("stateLabel");
-  if (stEl) { stEl.textContent = "In attesa"; stEl.className = "state-badge state-idle"; }
+  if (stEl) { stEl.textContent = "Idle"; stEl.className = "state-badge state-idle"; }
 }
 
 /* ── Calendar integration ── */
@@ -1579,7 +1579,7 @@ function parseIcs(text) {
       if (cur && cur.start && cur.end && cur.end > cur.start) {
         events.push({
           uid: cur.uid || ("ev_" + cur.start + "_" + Math.random().toString(36).slice(2, 8)),
-          title: cur.title || "(senza titolo)",
+          title: cur.title || "(untitled)",
           start: cur.start,
           end: cur.end,
           classTag: null,
@@ -1620,7 +1620,7 @@ function matchSessionForEvent(event, sessions) {
 }
 
 function classOptionsHtml(selected) {
-  let html = `<option value="">— classifica —</option>`;
+  let html = `<option value="">— classify —</option>`;
   for (const c of EVENT_CLASSES) {
     html += `<option value="${c.id}"${c.id === selected ? " selected" : ""}>${c.label}</option>`;
   }
@@ -1644,7 +1644,7 @@ function renderCalendarEvents() {
   if (!events.length) {
     const p = document.createElement("p");
     p.className = "cal-empty";
-    p.textContent = "Nessun evento importato. Carica un file .ics per iniziare.";
+    p.textContent = "No events imported. Upload an .ics file to get started.";
     calEventList.appendChild(p);
     renderCalendarStats();
     return;
@@ -1661,8 +1661,8 @@ function renderCalendarEvents() {
       <div class="cev-title">${escapeHtml(ev.title)}</div>
       <div class="cev-meta">${fmtEventTime(ev)}</div>
       ${matched
-        ? `<div class="cev-match">✓ collegato a sessione ${fmtDate(matched.startedAt)} · media ${matched.avgRate.toFixed(1)}/min</div>`
-        : `<div class="cev-no-match">nessuna sessione sovrapposta</div>`}
+        ? `<div class="cev-match">✓ linked to session ${fmtDate(matched.startedAt)} · avg ${matched.avgRate.toFixed(1)}/min</div>`
+        : `<div class="cev-no-match">no overlapping session</div>`}
     `;
 
     const select = document.createElement("select");
@@ -1680,7 +1680,7 @@ function renderCalendarEvents() {
     const del = document.createElement("button");
     del.className = "cev-del";
     del.textContent = "✕";
-    del.title = "Rimuovi evento";
+    del.title = "Remove event";
     del.addEventListener("click", () => {
       const next = loadEvents().filter(e => e.uid !== ev.uid);
       saveEvents(next);
@@ -1774,9 +1774,9 @@ function renderCalendarStats() {
     const card = document.createElement("div");
     card.className = "class-stat cs-" + CLASS_CSS_KEY[c.id];
     card.innerHTML = `
-      <div class="cs-label">${c.label} · ${list.length} sess.</div>
-      <div class="cs-row"><span>Rate medio</span><strong>${avg.toFixed(1)}/min</strong></div>
-      <div class="cs-row"><span>Variabilità σ</span><strong>${sd.toFixed(2)}</strong></div>
+      <div class="cs-label">${c.label} · ${list.length} session${list.length === 1 ? "" : "s"}</div>
+      <div class="cs-row"><span>Average rate</span><strong>${avg.toFixed(1)}/min</strong></div>
+      <div class="cs-row"><span>Variability σ</span><strong>${sd.toFixed(2)}</strong></div>
       <div class="cs-row"><span>Focus Depth</span><strong>${fdAvg != null ? fdAvg.toFixed(0) + "/100" : "—"}</strong></div>
       <div class="cs-row"><span>Cognitive Fatigue</span><strong>${cfAvg != null ? cfAvg.toFixed(0) + "/100" : "—"}</strong></div>
     `;
@@ -1792,7 +1792,7 @@ icsFileInput?.addEventListener("change", async () => {
     const text = await file.text();
     const parsed = parseIcs(text);
     if (!parsed.length) {
-      setStatus("Nessun evento trovato nel file .ics.", true);
+      setStatus("No events found in the .ics file.", true);
     } else {
       const existing = loadEvents();
       const byUid = new Map(existing.map(e => [e.uid, e]));
@@ -1800,13 +1800,13 @@ icsFileInput?.addEventListener("change", async () => {
         if (!byUid.has(ev.uid)) byUid.set(ev.uid, ev);
       }
       saveEvents([...byUid.values()]);
-      setStatus(`Importati ${parsed.length} eventi dal calendario.`);
+      setStatus(`Imported ${parsed.length} events from the calendar.`);
       autoMatchSessionsToEvents();
       renderCalendarEvents();
       renderSessions();
     }
   } catch (e) {
-    setStatus("Errore lettura .ics: " + e.message, true);
+    setStatus("Error reading .ics: " + e.message, true);
   } finally {
     icsFileInput.value = "";
   }
@@ -1828,7 +1828,7 @@ function autoMatchSessionsToEvents() {
 }
 
 clearEventsBtn?.addEventListener("click", () => {
-  if (!confirm("Cancellare tutti gli eventi importati?")) return;
+  if (!confirm("Delete all imported events?")) return;
   saveEvents([]);
   renderCalendarEvents();
 });

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -51,7 +51,7 @@
       </div>
       <div class="topbar-status">
         <span id="pulse" class="pulse idle"></span>
-        <span id="pulseLabel">In attesa</span>
+        <span id="pulseLabel">Idle</span>
       </div>
     </div>
 
@@ -64,27 +64,27 @@
         response to workload in real time—your eyes never lie.
       </p>
       <div class="hero-meta">
-        <span>finestra scorrevole · 5 min</span>
+        <span>5 min rolling window</span>
         <span class="sep">·</span>
-        <span>rilevamento on-device</span>
+        <span>on-device detection</span>
         <span class="sep">·</span>
-        <span>CSV esportabile</span>
+        <span>exportable CSV</span>
       </div>
       <div class="floaty" aria-hidden="true"></div>
     </section>
 
     <section class="controls">
-      <button id="startBtn" type="button">Avvia</button>
-      <button id="stopBtn" type="button" disabled>Ferma</button>
+      <button id="startBtn" type="button">Start</button>
+      <button id="stopBtn" type="button" disabled>Stop</button>
       <button id="pipBtn" type="button" disabled>Picture-in-Picture</button>
-      <button id="wakeBtn" type="button" aria-pressed="false">Tieni schermo attivo</button>
+      <button id="wakeBtn" type="button" aria-pressed="false">Keep screen awake</button>
       <label class="preview-toggle">
         <input type="checkbox" id="autoPauseChk" checked />
-        Auto-pausa senza volto
+        Auto-pause when face is lost
       </label>
       <label class="preview-toggle">
         <input type="checkbox" id="previewChk" />
-        Mostra video
+        Show video
       </label>
     </section>
 
@@ -97,34 +97,34 @@
       <div class="stat">
         <div class="label">Blink rate</div>
         <div class="value"><span id="rateVal">0.0</span><span class="unit">/min</span></div>
-        <div class="hint">finestra scorrevole 5 min</div>
+        <div class="hint">5 min rolling window</div>
       </div>
       <div class="stat">
-        <div class="label">Blink rate (sessione)</div>
+        <div class="label">Blink rate (session)</div>
         <div class="value"><span id="sessionRateVal">0.0</span><span class="unit">/min</span></div>
-        <div class="hint">media da inizio sessione</div>
+        <div class="hint">average since session start</div>
       </div>
       <div class="stat">
-        <div class="label">Variazione</div>
+        <div class="label">Variation</div>
         <div class="value"><span id="varVal">0.0</span><span class="unit">σ</span></div>
-        <div class="hint">dev. std. del rate da inizio sessione</div>
+        <div class="hint">std. dev. of rate since session start</div>
       </div>
       <div class="stat">
-        <div class="label">Totale blink</div>
+        <div class="label">Total blinks</div>
         <div class="value"><span id="totalVal">0</span></div>
-        <div class="hint">dall'avvio della sessione</div>
+        <div class="hint">since session started</div>
       </div>
       <div class="stat">
-        <div class="label">Sessione</div>
+        <div class="label">Session</div>
         <div class="value"><span id="sessionVal">00:00</span></div>
-        <div class="hint">durata monitoraggio</div>
+        <div class="hint">monitoring duration</div>
       </div>
     </section>
 
     <section class="cognitive-wrap">
       <div class="cog-header">
-        <span class="cog-title">Stato cognitivo</span>
-        <span id="stateLabel" class="state-badge state-idle">In attesa</span>
+        <span class="cog-title">Cognitive state</span>
+        <span id="stateLabel" class="state-badge state-idle">Idle</span>
       </div>
       <div class="cog-cards">
         <div class="cog-card">
@@ -134,8 +134,8 @@
             <span class="cog-unit">/100</span>
           </div>
           <div class="cog-bar-track"><div class="cog-bar-fill cog-fd" id="fdBar" style="width:0%"></div></div>
-          <div class="cog-hint">soppressione attenzionale · baseline personale</div>
-          <div class="cog-conf" id="fdConf">in attesa</div>
+          <div class="cog-hint">attentional suppression · personal baseline</div>
+          <div class="cog-conf" id="fdConf">waiting</div>
         </div>
         <div class="cog-card">
           <div class="cog-card-label">Cognitive Fatigue</div>
@@ -144,8 +144,8 @@
             <span class="cog-unit">/100</span>
           </div>
           <div class="cog-bar-track"><div class="cog-bar-fill cog-cf" id="cfBar" style="width:0%"></div></div>
-          <div class="cog-hint">deriva temporale · rebound episodes</div>
-          <div class="cog-conf" id="cfConf">in attesa</div>
+          <div class="cog-hint">temporal drift · rebound episodes</div>
+          <div class="cog-conf" id="cfConf">waiting</div>
         </div>
       </div>
     </section>
@@ -153,27 +153,27 @@
     <section class="dashboard">
       <div class="chart-wrap">
         <div class="chart-head">
-          <div class="chart-title">Frequenza in tempo reale — ultimi 120 s</div>
+          <div class="chart-title">Real-time frequency — last 120 s</div>
           <div class="legend">
             <span><span class="sw sw-rate"></span>blink rate (/min)</span>
-            <span><span class="sw sw-var"></span>variazione (σ)</span>
+            <span><span class="sw sw-var"></span>variation (σ)</span>
           </div>
         </div>
-        <canvas id="chart" aria-label="Grafico del blink rate"></canvas>
+        <canvas id="chart" aria-label="Blink rate chart"></canvas>
       </div>
 
       <div class="sessions-wrap">
         <div class="sessions-header">
-          <h2>Sessioni salvate</h2>
+          <h2>Saved sessions</h2>
           <div class="sessions-actions">
-            <button id="exportBtn" type="button">Scarica riepilogo CSV</button>
-            <button id="clearBtn" type="button" class="danger">Cancella tutte</button>
+            <button id="exportBtn" type="button">Download summary CSV</button>
+            <button id="clearBtn" type="button" class="danger">Clear all</button>
           </div>
         </div>
         <div id="sessionList" class="session-list"></div>
         <p class="hint-muted">
-          Le sessioni sono conservate in localStorage del browser. Il CSV della
-          sessione viene scaricato automaticamente alla pressione di "Ferma".
+          Sessions are stored in your browser's localStorage. The session CSV
+          is downloaded automatically when you press "Stop".
         </p>
       </div>
     </section>
@@ -182,26 +182,26 @@
     <section id="reportSection" class="report-section" hidden>
       <div class="report-header">
         <div>
-          <h2 class="report-title">Rapporto sessione</h2>
+          <h2 class="report-title">Session report</h2>
           <span id="reportDate" class="report-date"></span>
         </div>
         <div class="report-header-actions">
-          <button id="exportReportBtn" type="button" class="report-export">Esporta CSV</button>
-          <button id="closeReportBtn" type="button" class="report-close">Chiudi</button>
+          <button id="exportReportBtn" type="button" class="report-export">Export CSV</button>
+          <button id="closeReportBtn" type="button" class="report-close">Close</button>
         </div>
       </div>
 
       <div class="report-kpis">
         <div class="report-kpi">
-          <div class="rkpi-label">Durata</div>
+          <div class="rkpi-label">Duration</div>
           <div class="rkpi-value" id="repDuration">—</div>
         </div>
         <div class="report-kpi">
-          <div class="rkpi-label">Totale blink</div>
+          <div class="rkpi-label">Total blinks</div>
           <div class="rkpi-value" id="repTotal">—</div>
         </div>
         <div class="report-kpi">
-          <div class="rkpi-label">Rate medio</div>
+          <div class="rkpi-label">Average rate</div>
           <div class="rkpi-value"><span id="repAvgRate">—</span><span class="rkpi-unit">/min</span></div>
         </div>
         <div class="report-kpi">
@@ -209,28 +209,28 @@
           <div class="rkpi-value" id="repTrend">—</div>
         </div>
         <div class="report-kpi">
-          <div class="rkpi-label">Variabilità σ</div>
+          <div class="rkpi-label">Variability σ</div>
           <div class="rkpi-value" id="repVar">—</div>
         </div>
         <div class="report-kpi">
-          <div class="rkpi-label">Focus Depth medio</div>
+          <div class="rkpi-label">Avg Focus Depth</div>
           <div class="rkpi-value"><span id="repFdAvg">—</span><span class="rkpi-unit">/100</span></div>
           <div class="rkpi-sub" id="repFdTrend">—</div>
         </div>
         <div class="report-kpi">
-          <div class="rkpi-label">Cognitive Fatigue medio</div>
+          <div class="rkpi-label">Avg Cognitive Fatigue</div>
           <div class="rkpi-value"><span id="repCfAvg">—</span><span class="rkpi-unit">/100</span></div>
           <div class="rkpi-sub" id="repCfTrend">—</div>
         </div>
       </div>
 
       <div class="report-chart-wrap">
-        <div class="report-chart-title">Blink rate durante la sessione</div>
+        <div class="report-chart-title">Blink rate during session</div>
         <canvas id="reportChart"></canvas>
         <div class="report-chart-legend">
           <span><span class="sw sw-rate"></span>blink rate (/min)</span>
           <span><span class="sw sw-trend"></span>trendline</span>
-          <span><span class="sw sw-normal"></span>range normale (12–20/min)</span>
+          <span><span class="sw sw-normal"></span>normal range (12–20/min)</span>
         </div>
       </div>
 
@@ -241,36 +241,36 @@
     <section class="calendar-section">
       <div class="cal-header">
         <div>
-          <h2 class="cal-title">Calendario & classificazione</h2>
-          <span class="cal-sub">Associa il blink rate al tipo di attività</span>
+          <h2 class="cal-title">Calendar &amp; classification</h2>
+          <span class="cal-sub">Link blink rate to activity type</span>
         </div>
         <div class="cal-actions">
           <label class="cal-import">
             <input type="file" id="icsFile" accept=".ics,text/calendar" hidden />
-            <span>Importa .ics</span>
+            <span>Import .ics</span>
           </label>
-          <button id="clearEventsBtn" type="button" class="danger">Cancella eventi</button>
+          <button id="clearEventsBtn" type="button" class="danger">Clear events</button>
         </div>
       </div>
 
       <p class="hint-muted cal-hint">
-        Esporta un file <code>.ics</code> dal tuo calendario (Google, Apple,
-        Outlook) e trascinalo qui. Gli eventi che si sovrappongono alle
-        sessioni registrate verranno collegati automaticamente. Puoi anche
-        classificare manualmente una sessione dal menu <em>Classe</em>.
+        Export an <code>.ics</code> file from your calendar (Google, Apple,
+        Outlook) and drop it here. Events that overlap recorded sessions
+        will be linked automatically. You can also classify a session
+        manually from the <em>Class</em> menu.
       </p>
 
       <div id="calEventList" class="cal-event-list"></div>
 
       <div id="calStats" class="cal-stats" hidden>
-        <h3 class="cal-stats-title">Analisi per tipo di attività</h3>
+        <h3 class="cal-stats-title">Analysis by activity type</h3>
         <div id="calStatsBody" class="cal-stats-body"></div>
       </div>
     </section>
 
     <p id="status" class="status" role="status" aria-live="polite">
       <span class="pulse idle" aria-hidden="true"></span>
-      <span>Pronto.</span>
+      <span>Ready.</span>
     </p>
   </main>
 
