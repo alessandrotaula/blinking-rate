@@ -82,6 +82,10 @@ const calEventList = el("calEventList");
 const clearEventsBtn = el("clearEventsBtn");
 const calStats = el("calStats");
 const calStatsBody = el("calStatsBody");
+const openProviderHelpBtn = el("openProviderHelpBtn");
+const providerHelp = el("providerHelp");
+const icsUrlInput = el("icsUrlInput");
+const importIcsUrlBtn = el("importIcsUrlBtn");
 let currentReportSession = null;
 
 const state = {
@@ -1794,16 +1798,8 @@ icsFileInput?.addEventListener("change", async () => {
     if (!parsed.length) {
       setStatus("No events found in the .ics file.", true);
     } else {
-      const existing = loadEvents();
-      const byUid = new Map(existing.map(e => [e.uid, e]));
-      for (const ev of parsed) {
-        if (!byUid.has(ev.uid)) byUid.set(ev.uid, ev);
-      }
-      saveEvents([...byUid.values()]);
-      setStatus(`Imported ${parsed.length} events from the calendar.`);
-      autoMatchSessionsToEvents();
-      renderCalendarEvents();
-      renderSessions();
+      const imported = mergeAndPersistEvents(parsed);
+      setStatus(`Imported ${imported} events from the calendar file.`);
     }
   } catch (e) {
     setStatus("Error reading .ics: " + e.message, true);
@@ -1811,6 +1807,28 @@ icsFileInput?.addEventListener("change", async () => {
     icsFileInput.value = "";
   }
 });
+
+
+function mergeAndPersistEvents(parsed) {
+  if (!parsed.length) return 0;
+  const existing = loadEvents();
+  const byUid = new Map(existing.map(e => [e.uid, e]));
+  for (const ev of parsed) {
+    if (!byUid.has(ev.uid)) byUid.set(ev.uid, ev);
+  }
+  saveEvents([...byUid.values()]);
+  autoMatchSessionsToEvents();
+  renderCalendarEvents();
+  renderSessions();
+  return parsed.length;
+}
+
+function normalizeIcsUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (u.startsWith("webcal://")) return "https://" + u.slice("webcal://".length);
+  return u;
+}
 
 function autoMatchSessionsToEvents() {
   const events = loadEvents();
@@ -1834,3 +1852,32 @@ clearEventsBtn?.addEventListener("click", () => {
 });
 
 renderCalendarEvents();
+
+
+importIcsUrlBtn?.addEventListener("click", async () => {
+  const rawUrl = icsUrlInput?.value || "";
+  const url = normalizeIcsUrl(rawUrl);
+  if (!url) {
+    setStatus("Paste an ICS URL first.", true);
+    return;
+  }
+  try {
+    setStatus("Downloading calendar feed…");
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const parsed = parseIcs(text);
+    if (!parsed.length) {
+      setStatus("No events found in the calendar URL.", true);
+      return;
+    }
+    const imported = mergeAndPersistEvents(parsed);
+    setStatus(`Imported ${imported} events from calendar URL.`);
+  } catch (e) {
+    setStatus("Unable to import ICS URL (check CORS/privacy settings): " + e.message, true);
+  }
+});
+
+openProviderHelpBtn?.addEventListener("click", () => {
+  if (providerHelp) providerHelp.open = true;
+});
