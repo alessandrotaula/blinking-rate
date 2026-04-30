@@ -228,10 +228,28 @@ main {
   border-color: rgba(249,214,232,0.4);
   color: var(--dn-fg-1);
 }
-.controls button#startBtn {
+.controls button#toggleBtn {
   background: var(--dn-fg-1); color: #140e1d; border-color: transparent; font-weight: 600;
+  min-width: 86px; justify-content: center;
 }
-.controls button#startBtn:hover:not(:disabled) { background: #fff; }
+.controls button#toggleBtn:hover:not(:disabled) { background: #fff; }
+.controls button#toggleBtn[data-state="running"] {
+  background: linear-gradient(135deg, #f4b4c7, #e78fa8);
+  color: #2a0f1a;
+}
+.controls button#toggleBtn[data-state="running"]:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ffc7d6, #f29ab3);
+}
+.controls button#toggleBtn[data-state="running"]::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%;
+  background: #2a0f1a; box-shadow: 0 0 0 0 rgba(42,15,26,0.6);
+  animation: toggle-pulse 1.4s ease-in-out infinite;
+}
+@keyframes toggle-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(42,15,26,0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(42,15,26,0); }
+  100% { box-shadow: 0 0 0 0 rgba(42,15,26,0); }
+}
 
 .preview-toggle {
   display: inline-flex; align-items: center; gap: 8px;

@@ -43,8 +43,7 @@ const CLASS_CSS_KEY = {
 };
 
 const el = (id) => document.getElementById(id);
-const startBtn = el("startBtn");
-const stopBtn = el("stopBtn");
+const toggleBtn = el("toggleBtn");
 const pipBtn = el("pipBtn");
 const wakeBtn = el("wakeBtn");
 const exportBtn = el("exportBtn");
@@ -768,13 +767,13 @@ function renderSessions() {
 }
 
 async function start() {
-  startBtn.disabled = true;
+  toggleBtn.disabled = true;
   try {
     if (!state.landmarker) await loadLandmarker();
     await startCamera();
   } catch (e) {
     setStatus("Unable to start: " + e.message, true);
-    startBtn.disabled = false;
+    toggleBtn.disabled = false;
     return;
   }
   state.startedAt = Date.now();
@@ -818,7 +817,9 @@ async function start() {
   state.sampleTimer = setInterval(sample, SAMPLE_INTERVAL_MS);
   state.uiTimer = setInterval(updateUI, 250);
 
-  stopBtn.disabled = false;
+  toggleBtn.disabled = false;
+  toggleBtn.textContent = "Stop";
+  toggleBtn.dataset.state = "running";
   pipBtn.disabled = !("pictureInPictureEnabled" in document) || !document.pictureInPictureEnabled;
   setStatus("Running — detection continues even when you switch tabs.");
   setPulse("live", "Live");
@@ -852,8 +853,9 @@ function stop() {
   } else {
     setStatus("Stopped.");
   }
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
+  toggleBtn.disabled = false;
+  toggleBtn.textContent = "Start";
+  toggleBtn.dataset.state = "idle";
   pipBtn.disabled = true;
   setPulse("idle", "Idle");
   resetCognitiveUI();
@@ -877,8 +879,13 @@ autoPauseChk.addEventListener("change", () => {
     setPulse("live", "Live");
   }
 });
-startBtn.addEventListener("click", start);
-stopBtn.addEventListener("click", stop);
+toggleBtn.addEventListener("click", () => {
+  if (toggleBtn.dataset.state === "running") {
+    stop();
+  } else {
+    start();
+  }
+});
 pipBtn.addEventListener("click", togglePip);
 wakeBtn.addEventListener("click", toggleWakeLock);
 exportBtn.addEventListener("click", exportAllSessions);
