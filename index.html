@@ -247,8 +247,9 @@
         <div class="cal-actions">
           <label class="cal-import">
             <input type="file" id="icsFile" accept=".ics,text/calendar" hidden />
-            <span>Import .ics</span>
+            <span>Import .ics file</span>
           </label>
+          <button id="openProviderHelpBtn" type="button">Google/Outlook/Apple</button>
           <button id="clearEventsBtn" type="button" class="danger">Clear events</button>
         </div>
       </div>
@@ -257,8 +258,22 @@
         Export an <code>.ics</code> file from your calendar (Google, Apple,
         Outlook) and drop it here. Events that overlap recorded sessions
         will be linked automatically. You can also classify a session
-        manually from the <em>Class</em> menu.
+        manually from the <em>Class</em> menu. For automatic sync, paste a private/public ICS URL from Google Calendar, Outlook or Apple Calendar.
       </p>
+
+      <div class="cal-url-import">
+        <input id="icsUrlInput" type="url" placeholder="Paste calendar ICS URL (webcal:// or https://...)" />
+        <button id="importIcsUrlBtn" type="button">Import from URL</button>
+      </div>
+
+      <details class="cal-help" id="providerHelp">
+        <summary>Where to find ICS links</summary>
+        <ul>
+          <li><strong>Google Calendar:</strong> Settings → your calendar → Integrate calendar → Secret address in iCal format.</li>
+          <li><strong>Outlook (Microsoft 365/Outlook.com):</strong> Calendar settings → Shared calendars → Publish a calendar → ICS link.</li>
+          <li><strong>Apple Calendar (iCloud):</strong> Open iCloud Calendar on web → share icon → Public Calendar → copy the ICS link.</li>
+        </ul>
+      </details>
 
       <div id="calEventList" class="cal-event-list"></div>
 

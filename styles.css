@@ -808,3 +808,36 @@ button.danger:hover { background: rgba(255,154,169,0.10); border-color: rgba(255
   font-size: 12px; color: var(--dn-fg-2); margin-top: 3px;
 }
 .cs-row strong { color: var(--dn-fg-1); font-variant-numeric: tabular-nums; }
+
+.cal-url-import {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+#icsUrlInput {
+  min-width: 240px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--dn-border);
+  background: rgba(255,255,255,0.04);
+  color: var(--dn-fg-1);
+}
+#importIcsUrlBtn, #openProviderHelpBtn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--dn-border);
+  background: rgba(255,255,255,0.04);
+  color: var(--dn-fg-1);
+  font: inherit;
+  cursor: pointer;
+}
+.cal-help {
+  margin-bottom: 14px;
+  border: 1px solid var(--dn-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.02);
+}
+.cal-help summary { cursor: pointer; color: var(--dn-fg-2); }
+.cal-help ul { margin: 8px 0 0 18px; color: var(--dn-fg-3); font-size: 12px; }
