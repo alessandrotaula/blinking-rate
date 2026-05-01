@@ -1842,7 +1842,7 @@ renderCalendarEvents();
 // → APIs & Services → Credentials → OAuth 2.0 Client IDs → Web application).
 // Add the deployed origin (and http://localhost:<port> for dev) to
 // "Authorized JavaScript origins". Leave empty to disable Google sign-in.
-const GOOGLE_CLIENT_ID = "";
+const GOOGLE_CLIENT_ID = "615032101382-bglrmgcsqnfijkn405pjv1cu14rgpccb.apps.googleusercontent.com";
 const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
 const GOOGLE_TOKEN_KEY = "blinkGoogleToken.v1";
 
