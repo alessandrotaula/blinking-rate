@@ -76,15 +76,12 @@ const repFdTrend = el("repFdTrend");
 const repCfTrend = el("repCfTrend");
 const reportAnalysis = el("reportAnalysis");
 const exportReportBtn = el("exportReportBtn");
-const icsFileInput = el("icsFile");
 const calEventList = el("calEventList");
 const clearEventsBtn = el("clearEventsBtn");
 const calStats = el("calStats");
 const calStatsBody = el("calStatsBody");
-const openProviderHelpBtn = el("openProviderHelpBtn");
-const providerHelp = el("providerHelp");
-const icsUrlInput = el("icsUrlInput");
-const importIcsUrlBtn = el("importIcsUrlBtn");
+const connectGoogleBtn = el("connectGoogleBtn");
+const connectGoogleLabel = el("connectGoogleLabel");
 let currentReportSession = null;
 
 const state = {
@@ -1796,45 +1793,24 @@ function renderCalendarStats() {
   calStats.hidden = calStatsBody.children.length === 0;
 }
 
-icsFileInput?.addEventListener("change", async () => {
-  const file = icsFileInput.files?.[0];
-  if (!file) return;
-  try {
-    const text = await file.text();
-    const parsed = parseIcs(text);
-    if (!parsed.length) {
-      setStatus("No events found in the .ics file.", true);
-    } else {
-      const imported = mergeAndPersistEvents(parsed);
-      setStatus(`Imported ${imported} events from the calendar file.`);
-    }
-  } catch (e) {
-    setStatus("Error reading .ics: " + e.message, true);
-  } finally {
-    icsFileInput.value = "";
-  }
-});
-
-
 function mergeAndPersistEvents(parsed) {
   if (!parsed.length) return 0;
   const existing = loadEvents();
   const byUid = new Map(existing.map(e => [e.uid, e]));
+  let added = 0;
   for (const ev of parsed) {
-    if (!byUid.has(ev.uid)) byUid.set(ev.uid, ev);
+    if (!byUid.has(ev.uid)) { byUid.set(ev.uid, ev); added++; }
+    else {
+      // refresh title/start/end if changed, keep classTag
+      const prev = byUid.get(ev.uid);
+      byUid.set(ev.uid, { ...prev, title: ev.title, start: ev.start, end: ev.end });
+    }
   }
   saveEvents([...byUid.values()]);
   autoMatchSessionsToEvents();
   renderCalendarEvents();
   renderSessions();
-  return parsed.length;
-}
-
-function normalizeIcsUrl(url) {
-  const u = String(url || "").trim();
-  if (!u) return "";
-  if (u.startsWith("webcal://")) return "https://" + u.slice("webcal://".length);
-  return u;
+  return added;
 }
 
 function autoMatchSessionsToEvents() {
@@ -1860,31 +1836,145 @@ clearEventsBtn?.addEventListener("click", () => {
 
 renderCalendarEvents();
 
+/* ── Google Calendar OAuth integration ── */
 
-importIcsUrlBtn?.addEventListener("click", async () => {
-  const rawUrl = icsUrlInput?.value || "";
-  const url = normalizeIcsUrl(rawUrl);
-  if (!url) {
-    setStatus("Paste an ICS URL first.", true);
+// Set this to your Google OAuth Web Client ID (Google Cloud Console
+// → APIs & Services → Credentials → OAuth 2.0 Client IDs → Web application).
+// Add the deployed origin (and http://localhost:<port> for dev) to
+// "Authorized JavaScript origins". Leave empty to disable Google sign-in.
+const GOOGLE_CLIENT_ID = "";
+const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
+const GOOGLE_TOKEN_KEY = "blinkGoogleToken.v1";
+
+let googleTokenClient = null;
+
+function getStoredGoogleToken() {
+  try {
+    const raw = sessionStorage.getItem(GOOGLE_TOKEN_KEY);
+    if (!raw) return null;
+    const t = JSON.parse(raw);
+    if (Date.now() > t.exp) { sessionStorage.removeItem(GOOGLE_TOKEN_KEY); return null; }
+    return t;
+  } catch { return null; }
+}
+
+function updateGoogleConnectButton() {
+  if (!connectGoogleBtn) return;
+  const t = getStoredGoogleToken();
+  const connected = !!t;
+  connectGoogleBtn.dataset.connected = connected ? "true" : "false";
+  if (connectGoogleLabel) {
+    connectGoogleLabel.textContent = connected
+      ? "Refresh Google Calendar"
+      : "Connect Google Calendar";
+  }
+}
+
+function ensureGoogleClient() {
+  if (!GOOGLE_CLIENT_ID) return false;
+  if (!window.google?.accounts?.oauth2) return false;
+  if (googleTokenClient) return true;
+  googleTokenClient = window.google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: GOOGLE_SCOPES,
+    callback: handleGoogleToken,
+  });
+  return true;
+}
+
+function handleGoogleToken(resp) {
+  if (resp.error) {
+    setStatus("Google sign-in failed: " + resp.error, true);
     return;
   }
+  const exp = Date.now() + Math.max(60, (resp.expires_in || 3600) - 60) * 1000;
+  sessionStorage.setItem(
+    GOOGLE_TOKEN_KEY,
+    JSON.stringify({ token: resp.access_token, exp })
+  );
+  updateGoogleConnectButton();
+  fetchGoogleCalendarEvents();
+}
+
+async function fetchGoogleCalendarEvents() {
+  const t = getStoredGoogleToken();
+  if (!t) return;
+  const now = Date.now();
+  const timeMin = new Date(now - 30 * 24 * 3600 * 1000).toISOString();
+  const timeMax = new Date(now +  7 * 24 * 3600 * 1000).toISOString();
+  const url =
+    "https://www.googleapis.com/calendar/v3/calendars/primary/events" +
+    "?singleEvents=true&orderBy=startTime&maxResults=250" +
+    "&timeMin=" + encodeURIComponent(timeMin) +
+    "&timeMax=" + encodeURIComponent(timeMax);
   try {
-    setStatus("Downloading calendar feed…");
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    const parsed = parseIcs(text);
-    if (!parsed.length) {
-      setStatus("No events found in the calendar URL.", true);
+    setStatus("Fetching Google Calendar events…");
+    const res = await fetch(url, { headers: { Authorization: "Bearer " + t.token } });
+    if (res.status === 401) {
+      sessionStorage.removeItem(GOOGLE_TOKEN_KEY);
+      updateGoogleConnectButton();
+      setStatus("Google session expired — click Connect again.", true);
       return;
     }
-    const imported = mergeAndPersistEvents(parsed);
-    setStatus(`Imported ${imported} events from calendar URL.`);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const events = (data.items || []).map(googleEventToInternal).filter(Boolean);
+    const added = mergeAndPersistEvents(events);
+    setStatus(
+      events.length === 0
+        ? "Google Calendar reachable, but no events in window."
+        : `Synced ${events.length} Google Calendar events (${added} new).`
+    );
   } catch (e) {
-    setStatus("Unable to import ICS URL (check CORS/privacy settings): " + e.message, true);
+    setStatus("Google Calendar fetch failed: " + e.message, true);
+  }
+}
+
+function googleEventToInternal(ev) {
+  const start = ev.start?.dateTime ? Date.parse(ev.start.dateTime)
+              : ev.start?.date     ? new Date(ev.start.date).getTime()
+              : null;
+  const end   = ev.end?.dateTime   ? Date.parse(ev.end.dateTime)
+              : ev.end?.date       ? new Date(ev.end.date).getTime()
+              : null;
+  if (!start || !end || end <= start) return null;
+  return {
+    uid: "g_" + ev.id,
+    title: ev.summary || "(untitled)",
+    start, end,
+    classTag: null,
+  };
+}
+
+connectGoogleBtn?.addEventListener("click", () => {
+  if (!GOOGLE_CLIENT_ID) {
+    alert(
+      "Google Calendar integration needs a one-time setup:\n\n" +
+      "1. Open https://console.cloud.google.com/apis/credentials\n" +
+      "2. Create an OAuth 2.0 Client ID (type: Web application)\n" +
+      "3. Add this site's origin (" + location.origin + ") to\n" +
+      "   \"Authorized JavaScript origins\"\n" +
+      "4. Enable the Google Calendar API for the project\n" +
+      "5. Paste the Client ID into app.js → GOOGLE_CLIENT_ID\n\n" +
+      "Then reload and click Connect."
+    );
+    return;
+  }
+  if (!ensureGoogleClient()) {
+    setStatus("Google sign-in script still loading — try again in a second.", true);
+    return;
+  }
+  if (getStoredGoogleToken()) {
+    fetchGoogleCalendarEvents();
+  } else {
+    googleTokenClient.requestAccessToken({ prompt: "" });
   }
 });
 
-openProviderHelpBtn?.addEventListener("click", () => {
-  if (providerHelp) providerHelp.open = true;
-});
+// On load, if we have a fresh token (still valid this tab), refresh events.
+if (getStoredGoogleToken()) {
+  window.addEventListener("load", () => {
+    setTimeout(fetchGoogleCalendarEvents, 400);
+  });
+}
+updateGoogleConnectButton();
