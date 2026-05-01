@@ -59,18 +59,8 @@
     <section class="hero">
       <h1 class="hero-title">Your focus,<br/>captured.</h1>
       <p class="hero-sub">
-        <strong>Eye blinking tracker</strong><br/><br/>
-        Blink rate is a window into cognitive load and attention. Fewer blinks indicate deep focus;
-        increased frequency suggests mental strain or reduced concentration. Monitor your physiological
-        response to workload in real time—your eyes never lie.
+        <strong>Eye blinking tracker</strong>
       </p>
-      <div class="hero-meta">
-        <span>5 min rolling window</span>
-        <span class="sep">·</span>
-        <span>on-device detection</span>
-        <span class="sep">·</span>
-        <span>exportable CSV</span>
-      </div>
       <div class="floaty" aria-hidden="true"></div>
     </section>
 
@@ -164,16 +154,16 @@
 
       <div class="sessions-wrap">
         <div class="sessions-header">
-          <h2>Saved sessions</h2>
+          <h2>Daily reports</h2>
           <div class="sessions-actions">
-            <button id="exportBtn" type="button">Download summary CSV</button>
+            <button id="exportBtn" type="button">Export all data</button>
             <button id="clearBtn" type="button" class="danger">Clear all</button>
           </div>
         </div>
         <div id="sessionList" class="session-list"></div>
         <p class="hint-muted">
-          Sessions are stored in your browser's localStorage. The session CSV
-          is downloaded automatically when you press "Stop".
+          All sessions are stored locally in a single database. Click a day
+          to open its aggregated report.
         </p>
       </div>
     </section>
@@ -182,7 +172,7 @@
     <section id="reportSection" class="report-section" hidden>
       <div class="report-header">
         <div>
-          <h2 class="report-title">Session report</h2>
+          <h2 class="report-title">Session report <span id="liveReportBadge" class="live-badge" hidden>● live</span></h2>
           <span id="reportDate" class="report-date"></span>
         </div>
         <div class="report-header-actions">

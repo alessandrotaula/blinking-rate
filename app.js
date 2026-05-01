@@ -21,10 +21,11 @@ const FACE_LOST_MS = 1500;
 const FACE_BACK_MS = 500;
 const TICK_INTERVAL_MS = 40;
 const SESSIONS_KEY = "blinkSessions.v1";
-const MAX_STORED_SESSIONS = 20;
+const MAX_STORED_SESSIONS = 200;
 const BASELINES_KEY = "blinkBaselines.v1";
 const EVENTS_KEY = "blinkCalendarEvents.v1";
 const COG_TICK_MS = 2000;
+const LIVE_REPORT_INTERVAL_MS = 10 * 60 * 1000;
 
 const EVENT_CLASSES = [
   { id: "business_call", label: "Business call" },
@@ -90,6 +91,8 @@ const state = {
   tickWorker: null,
   sampleTimer: null,
   uiTimer: null,
+  liveReportTimer: null,
+  reportDismissed: false,
   eyesClosed: false,
   lastBlinkAt: 0,
   blinkTimes: [],
@@ -553,12 +556,12 @@ function saveSessions(list) {
   }
 }
 
-function persistCurrentSession() {
+function buildSessionSnapshot({ live = false } = {}) {
   if (!state.startedAt || state.rateHistory.length === 0) return null;
   const endedAt = Date.now();
   const rates = state.rateHistory.map((p) => p.v);
   const avg = rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
-  const session = {
+  return {
     id: "s_" + state.startedAt,
     startedAt: state.startedAt,
     endedAt,
@@ -572,7 +575,13 @@ function persistCurrentSession() {
     })),
     cogSamples: state.cogHistory.slice(),
     blinkTimes: state.blinkTimes.slice(),
+    live,
   };
+}
+
+function persistCurrentSession() {
+  const session = buildSessionSnapshot({ live: false });
+  if (!session) return null;
   const sessions = loadSessions();
   sessions.unshift(session);
   while (sessions.length > MAX_STORED_SESSIONS) sessions.pop();
@@ -678,19 +687,24 @@ function exportAllSessions() {
     return;
   }
   const lines = [
-    "session_id,started_at,ended_at,duration_seconds,total_blinks,avg_rate_per_min",
+    "session_id,day,started_at,ended_at,duration_seconds,total_blinks,avg_rate_per_min,class,event_label",
   ];
   for (const s of sessions) {
+    const cls = s.tag?.class || "";
+    const lbl = (s.tag?.label || "").replace(/[",\n]/g, " ");
     lines.push([
       s.id,
+      dayKey(s.startedAt),
       new Date(s.startedAt).toISOString(),
       new Date(s.endedAt).toISOString(),
       (s.durationMs / 1000).toFixed(1),
       s.totalBlinks,
       s.avgRate.toFixed(3),
+      cls,
+      lbl,
     ].join(","));
   }
-  downloadText("blink-sessions-summary.csv", lines.join("\n"));
+  downloadText("blink-database.csv", lines.join("\n"));
 }
 
 function deleteSession(id) {
@@ -707,58 +721,120 @@ function clearAllSessions() {
   renderCalendarEvents();
 }
 
+function dayKey(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function fmtDayLabel(ts) {
+  const day = startOfDay(ts);
+  const today = startOfDay(Date.now());
+  const diffDays = Math.round((today - day) / (24 * 3600 * 1000));
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  return new Date(day).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+}
+
+function groupSessionsByDay(sessions) {
+  const map = new Map();
+  for (const s of sessions) {
+    const k = dayKey(s.startedAt);
+    if (!map.has(k)) map.set(k, { key: k, dayStart: startOfDay(s.startedAt), sessions: [] });
+    map.get(k).sessions.push(s);
+  }
+  const out = [...map.values()];
+  out.sort((a, b) => b.dayStart - a.dayStart);
+  for (const g of out) g.sessions.sort((a, b) => a.startedAt - b.startedAt);
+  return out;
+}
+
+function aggregateDay(group) {
+  const sessions = group.sessions;
+  const samples = sessions.flatMap(s => (s.samples || []).map(p => ({
+    t: p.t,
+    rate: p.rate ?? p.v ?? 0,
+    variation: p.variation ?? 0,
+  }))).sort((a, b) => a.t - b.t);
+  const cogSamples = sessions.flatMap(s => s.cogSamples || []).sort((a, b) => a.t - b.t);
+  const totalBlinks = sessions.reduce((a, s) => a + (s.totalBlinks || 0), 0);
+  const durationMs = sessions.reduce((a, s) => a + (s.durationMs || 0), 0);
+  const startedAt = sessions[0]?.startedAt || group.dayStart;
+  const endedAt = sessions[sessions.length - 1]?.endedAt || (startedAt + durationMs);
+  const avgRate = samples.length ? samples.reduce((a, p) => a + p.rate, 0) / samples.length : 0;
+  return {
+    id: "day_" + group.key,
+    dayKey: group.key,
+    startedAt, endedAt, durationMs, totalBlinks, avgRate,
+    samples, cogSamples,
+    sessionCount: sessions.length,
+    childIds: sessions.map(s => s.id),
+    aggregated: true,
+  };
+}
+
 function renderSessions() {
   const sessions = loadSessions();
   sessionList.innerHTML = "";
   if (!sessions.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "No sessions recorded.";
+    empty.textContent = "No sessions recorded yet.";
     sessionList.appendChild(empty);
     return;
   }
-  for (const s of sessions) {
+  const days = groupSessionsByDay(sessions);
+  for (const g of days) {
+    const dayAgg = aggregateDay(g);
     const row = document.createElement("div");
-    row.className = "session-row";
+    row.className = "day-row";
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+
     const info = document.createElement("div");
-    info.className = "session-info";
-    const tagLabelTxt = s.tag?.label ? ` · <em>${escapeHtml(s.tag.label)}</em>` : "";
+    info.className = "day-info";
     info.innerHTML = `
-      <div class="s-date">${fmtDate(s.startedAt)}</div>
-      <div class="s-meta">
-        duration ${fmtTime(s.durationMs)} ·
-        ${s.totalBlinks} blinks ·
-        avg ${s.avgRate.toFixed(1)}/min${tagLabelTxt}
+      <div class="d-date">${fmtDayLabel(g.dayStart)}</div>
+      <div class="d-meta">
+        ${dayAgg.sessionCount} session${dayAgg.sessionCount === 1 ? "" : "s"} ·
+        ${fmtTime(dayAgg.durationMs)} total ·
+        ${dayAgg.totalBlinks} blinks ·
+        avg ${dayAgg.avgRate.toFixed(1)}/min
       </div>
     `;
-    const tagRow = document.createElement("div");
-    tagRow.className = "session-tag-row";
-    const lbl = document.createElement("label");
-    lbl.textContent = "Class";
-    const sel = document.createElement("select");
-    sel.className = "session-class-select";
-    sel.innerHTML = classOptionsHtml(s.tag?.class || "");
-    sel.addEventListener("change", () => {
-      tagSessionManually(s.id, sel.value || null);
-      renderCalendarStats();
-    });
-    tagRow.appendChild(lbl);
-    tagRow.appendChild(sel);
-    info.appendChild(tagRow);
 
     const actions = document.createElement("div");
-    actions.className = "session-actions";
-    const dl = document.createElement("button");
-    dl.textContent = "CSV";
-    dl.addEventListener("click", () => downloadSession(s));
+    actions.className = "day-actions";
+    const open = document.createElement("button");
+    open.textContent = "Open report";
+    open.className = "day-open";
+    open.addEventListener("click", (e) => {
+      e.stopPropagation();
+      generateReport(dayAgg);
+    });
     const del = document.createElement("button");
     del.textContent = "Delete";
     del.className = "danger";
-    del.addEventListener("click", () => deleteSession(s.id));
-    actions.appendChild(dl);
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete all ${dayAgg.sessionCount} session(s) from ${fmtDayLabel(g.dayStart)}?`)) return;
+      const childSet = new Set(dayAgg.childIds);
+      const remaining = loadSessions().filter(s => !childSet.has(s.id));
+      saveSessions(remaining);
+      renderSessions();
+      renderCalendarEvents();
+    });
+    actions.appendChild(open);
     actions.appendChild(del);
+
     row.appendChild(info);
     row.appendChild(actions);
+    row.addEventListener("click", () => generateReport(dayAgg));
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        generateReport(dayAgg);
+      }
+    });
     sessionList.appendChild(row);
   }
 }
@@ -813,6 +889,11 @@ async function start() {
 
   state.sampleTimer = setInterval(sample, SAMPLE_INTERVAL_MS);
   state.uiTimer = setInterval(updateUI, 250);
+  state.reportDismissed = false;
+  state.liveReportTimer = setInterval(() => {
+    const snap = buildSessionSnapshot({ live: true });
+    if (snap) generateReport(snap);
+  }, LIVE_REPORT_INTERVAL_MS);
 
   toggleBtn.disabled = false;
   toggleBtn.textContent = "Stop";
@@ -830,7 +911,8 @@ function stop() {
   }
   if (state.sampleTimer) clearInterval(state.sampleTimer);
   if (state.uiTimer) clearInterval(state.uiTimer);
-  state.sampleTimer = state.uiTimer = null;
+  if (state.liveReportTimer) clearInterval(state.liveReportTimer);
+  state.sampleTimer = state.uiTimer = state.liveReportTimer = null;
   stopKeepAlive();
   const saved = persistCurrentSession();
   // update multi-session baseline
@@ -844,8 +926,7 @@ function stop() {
   }
   stopCamera();
   if (saved) {
-    downloadSession(saved);
-    setStatus(`Session saved (${saved.totalBlinks} blinks in ${fmtTime(saved.durationMs)}). CSV downloaded.`);
+    setStatus(`Session saved (${saved.totalBlinks} blinks in ${fmtTime(saved.durationMs)}).`);
     generateReport(saved);
   } else {
     setStatus("Stopped.");
@@ -904,6 +985,7 @@ renderSessions();
 
 el("closeReportBtn").addEventListener("click", () => {
   reportSection.hidden = true;
+  if (state.startedAt) state.reportDismissed = true;
 });
 
 exportReportBtn?.addEventListener("click", () => {
@@ -964,8 +1046,12 @@ function trendTxt(slopePerMin, unit = "") {
   return `↓ ${s.toFixed(2)}${unit}/min`;
 }
 
-function generateReport(session) {
+function generateReport(session, opts = {}) {
   if (!session || session.samples.length < 4) return;
+  const isLive = !!session.live;
+  const wasHidden = reportSection.hidden;
+  // If user explicitly closed the report during this live session, don't reopen.
+  if (isLive && state.reportDismissed) return;
 
   currentReportSession = session;
 
@@ -1026,9 +1112,14 @@ function generateReport(session) {
   reportAnalysis.innerHTML = analysisCards.join("");
 
   reportSection.hidden = false;
+  reportSection.dataset.mode = isLive ? "live" : "final";
+  const liveBadge = el("liveReportBadge");
+  if (liveBadge) liveBadge.hidden = !isLive;
   requestAnimationFrame(() => {
     drawReportChart(session, rates, slope, intercept);
-    reportSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (wasHidden) {
+      reportSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   });
 }
 
@@ -1645,6 +1736,75 @@ function fmtEventTime(ev) {
   return sameDay ? `${d} · ${hm(s)}–${hm(e)}` : `${d} ${hm(s)} → ${e.toLocaleDateString()} ${hm(e)}`;
 }
 
+function startOfDay(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function bucketEvent(eventStart, now) {
+  const todayStart = startOfDay(now);
+  const yStart = todayStart - 24 * 3600 * 1000;
+  const sevenStart = todayStart - 7 * 24 * 3600 * 1000;
+  const thirtyStart = todayStart - 30 * 24 * 3600 * 1000;
+  if (eventStart >= todayStart) return "today";
+  if (eventStart >= yStart) return "yesterday";
+  if (eventStart >= sevenStart) return "past7";
+  if (eventStart >= thirtyStart) return "past30";
+  return null;
+}
+
+const BUCKET_DEFS = [
+  { id: "today",     label: "Today",        defaultOpen: true  },
+  { id: "yesterday", label: "Yesterday",    defaultOpen: false },
+  { id: "past7",     label: "Past 7 days",  defaultOpen: false },
+  { id: "past30",    label: "Past 30 days", defaultOpen: false },
+];
+
+function buildEventRow(ev, sessions) {
+  const matched = matchSessionForEvent(ev, sessions);
+  const row = document.createElement("div");
+  row.className = "cal-event-row " + (matched ? "matched" : "no-match");
+  const effectiveClass = ev.classTag || (matched?.tag?.class) || "";
+
+  const info = document.createElement("div");
+  info.className = "cev-info";
+  info.innerHTML = `
+    <div class="cev-title">${escapeHtml(ev.title)}</div>
+    <div class="cev-meta">${fmtEventTime(ev)}</div>
+    ${matched
+      ? `<div class="cev-match">✓ linked to session ${fmtDate(matched.startedAt)} · avg ${matched.avgRate.toFixed(1)}/min</div>`
+      : `<div class="cev-no-match">no overlapping session</div>`}
+  `;
+
+  const select = document.createElement("select");
+  select.className = "cev-class-select";
+  select.innerHTML = classOptionsHtml(effectiveClass);
+  select.addEventListener("change", () => {
+    updateEventClass(ev.uid, select.value || null);
+    if (matched) {
+      tagSessionFromEvent(matched.id, select.value || null, ev.title);
+    }
+    renderCalendarEvents();
+    renderSessions();
+  });
+
+  const del = document.createElement("button");
+  del.className = "cev-del";
+  del.textContent = "✕";
+  del.title = "Remove event";
+  del.addEventListener("click", () => {
+    const next = loadEvents().filter(e => e.uid !== ev.uid);
+    saveEvents(next);
+    renderCalendarEvents();
+  });
+
+  row.appendChild(info);
+  row.appendChild(select);
+  row.appendChild(del);
+  return row;
+}
+
 function renderCalendarEvents() {
   const events = loadEvents().sort((a, b) => b.start - a.start);
   const sessions = loadSessions();
@@ -1652,53 +1812,45 @@ function renderCalendarEvents() {
   if (!events.length) {
     const p = document.createElement("p");
     p.className = "cal-empty";
-    p.textContent = "No events imported. Upload an .ics file to get started.";
+    p.textContent = "No events imported. Connect Google Calendar to get started.";
     calEventList.appendChild(p);
     renderCalendarStats();
     return;
   }
+
+  const now = Date.now();
+  const buckets = { today: [], yesterday: [], past7: [], past30: [] };
   for (const ev of events) {
-    const matched = matchSessionForEvent(ev, sessions);
-    const row = document.createElement("div");
-    row.className = "cal-event-row " + (matched ? "matched" : "no-match");
-    const effectiveClass = ev.classTag || (matched?.tag?.class) || "";
+    const k = bucketEvent(ev.start, now);
+    if (k) buckets[k].push(ev);
+  }
 
-    const info = document.createElement("div");
-    info.className = "cev-info";
-    info.innerHTML = `
-      <div class="cev-title">${escapeHtml(ev.title)}</div>
-      <div class="cev-meta">${fmtEventTime(ev)}</div>
-      ${matched
-        ? `<div class="cev-match">✓ linked to session ${fmtDate(matched.startedAt)} · avg ${matched.avgRate.toFixed(1)}/min</div>`
-        : `<div class="cev-no-match">no overlapping session</div>`}
-    `;
+  let total = 0;
+  for (const def of BUCKET_DEFS) {
+    const list = buckets[def.id];
+    if (!list.length) continue;
+    total += list.length;
+    const details = document.createElement("details");
+    details.className = "cal-bucket";
+    if (def.defaultOpen) details.open = true;
+    const summary = document.createElement("summary");
+    summary.className = "cal-bucket-summary";
+    summary.innerHTML =
+      `<span class="cal-bucket-label">${def.label}</span>` +
+      `<span class="cal-bucket-count">${list.length}</span>`;
+    details.appendChild(summary);
+    const rows = document.createElement("div");
+    rows.className = "cal-bucket-rows";
+    for (const ev of list) rows.appendChild(buildEventRow(ev, sessions));
+    details.appendChild(rows);
+    calEventList.appendChild(details);
+  }
 
-    const select = document.createElement("select");
-    select.className = "cev-class-select";
-    select.innerHTML = classOptionsHtml(effectiveClass);
-    select.addEventListener("change", () => {
-      updateEventClass(ev.uid, select.value || null);
-      if (matched) {
-        tagSessionFromEvent(matched.id, select.value || null, ev.title);
-      }
-      renderCalendarEvents();
-      renderSessions();
-    });
-
-    const del = document.createElement("button");
-    del.className = "cev-del";
-    del.textContent = "✕";
-    del.title = "Remove event";
-    del.addEventListener("click", () => {
-      const next = loadEvents().filter(e => e.uid !== ev.uid);
-      saveEvents(next);
-      renderCalendarEvents();
-    });
-
-    row.appendChild(info);
-    row.appendChild(select);
-    row.appendChild(del);
-    calEventList.appendChild(row);
+  if (total === 0) {
+    const p = document.createElement("p");
+    p.className = "cal-empty";
+    p.textContent = "No events in the last 30 days.";
+    calEventList.appendChild(p);
   }
   renderCalendarStats();
 }
