@@ -1744,9 +1744,11 @@ function startOfDay(ts) {
 
 function bucketEvent(eventStart, now) {
   const todayStart = startOfDay(now);
+  const tomorrowStart = todayStart + 24 * 3600 * 1000;
   const yStart = todayStart - 24 * 3600 * 1000;
   const sevenStart = todayStart - 7 * 24 * 3600 * 1000;
   const thirtyStart = todayStart - 30 * 24 * 3600 * 1000;
+  if (eventStart >= tomorrowStart) return "future";
   if (eventStart >= todayStart) return "today";
   if (eventStart >= yStart) return "yesterday";
   if (eventStart >= sevenStart) return "past7";
@@ -1755,6 +1757,7 @@ function bucketEvent(eventStart, now) {
 }
 
 const BUCKET_DEFS = [
+  { id: "future",    label: "Upcoming",     defaultOpen: false },
   { id: "today",     label: "Today",        defaultOpen: true  },
   { id: "yesterday", label: "Yesterday",    defaultOpen: false },
   { id: "past7",     label: "Past 7 days",  defaultOpen: false },
