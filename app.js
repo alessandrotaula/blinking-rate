@@ -13,6 +13,8 @@ const BLINK_LOW = 0.25;
 const MIN_BLINK_GAP_MS = 120;
 const RATE_WINDOW_MS = 60_000;
 const SAMPLE_INTERVAL_MS = 500;
+const NO_BLINK_ALERT_MS = 90 * 1000;
+const NO_BLINK_ALERT_GRACE_MS = 30 * 1000;
 const VAR_WINDOW_SAMPLES = 30;
 const CHART_WINDOW_MS = 120_000;
 const UI_ROLLING_MS = 5 * 60_000;
@@ -293,6 +295,59 @@ function sample() {
   const recent = state.rateHistory.slice(-VAR_WINDOW_SAMPLES).map((p) => p.v);
   const variation = stddev(recent);
   state.varHistory.push({ t: now, v: variation });
+
+  checkNoBlinkAlert(now);
+}
+
+function checkNoBlinkAlert(now) {
+  if (!state.startedAt) return;
+  const sinceStart = now - state.startedAt;
+  if (sinceStart < NO_BLINK_ALERT_GRACE_MS) return;
+  if (state.lastResumedAt && now - state.lastResumedAt < NO_BLINK_ALERT_GRACE_MS) return;
+
+  const lastBlinkEpoch = state.blinkTimes.length
+    ? state.blinkTimes[state.blinkTimes.length - 1]
+    : state.startedAt;
+  const sinceBlink = now - lastBlinkEpoch;
+
+  if (sinceBlink < NO_BLINK_ALERT_MS) {
+    if (state.noBlinkAlertedAt && lastBlinkEpoch > state.noBlinkAlertedAt) {
+      state.noBlinkAlertedAt = 0;
+    }
+    return;
+  }
+  if (state.noBlinkAlertedAt) return;
+
+  playNoBlinkAlert();
+  state.noBlinkAlertedAt = now;
+  setStatus(`No blink detected for ${Math.round(sinceBlink / 1000)} s — remember to blink.`);
+}
+
+function playNoBlinkAlert() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const t0 = ctx.currentTime;
+    const chime = (start, freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.18, start + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.5);
+    };
+    chime(t0, 880);
+    chime(t0 + 0.18, 1175);
+    setTimeout(() => { try { ctx.close(); } catch {} }, 900);
+  } catch (e) {
+    console.warn("[blink alert] audio failed:", e);
+  }
 }
 
 function stddev(arr) {
@@ -856,6 +911,7 @@ async function start() {
   state.totalBlinks = 0;
   state.eyesClosed = false;
   state.lastBlinkAt = 0;
+  state.noBlinkAlertedAt = 0;
   state.paused = false;
   state.lastFaceSeenAt = Date.now();
   state.faceBackFirstSeenAt = 0;
@@ -2033,13 +2089,15 @@ function ensureGoogleClient() {
     client_id: GOOGLE_CLIENT_ID,
     scope: GOOGLE_SCOPES,
     callback: handleGoogleToken,
+    error_callback: handleGoogleError,
   });
   return true;
 }
 
 function handleGoogleToken(resp) {
   if (resp.error) {
-    setStatus("Google sign-in failed: " + resp.error, true);
+    console.warn("[google] token response error:", resp);
+    setStatus("Google sign-in failed: " + (resp.error_description || resp.error), true);
     return;
   }
   const exp = Date.now() + Math.max(60, (resp.expires_in || 3600) - 60) * 1000;
@@ -2049,6 +2107,31 @@ function handleGoogleToken(resp) {
   );
   updateGoogleConnectButton();
   fetchGoogleCalendarEvents();
+}
+
+function handleGoogleError(err) {
+  console.warn("[google] OAuth error:", err);
+  const t = err?.type || "unknown";
+  let msg;
+  if (t === "popup_failed_to_open") {
+    msg = "Google sign-in popup was blocked. Allow popups for this site and try again.";
+  } else if (t === "popup_closed") {
+    msg = "Google sign-in cancelled — popup was closed before consent.";
+  } else {
+    msg = "Google sign-in failed: " + (err?.message || t);
+  }
+  setStatus(msg, true);
+}
+
+function waitForGoogleScript(maxMs = 8000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    (function poll() {
+      if (window.google?.accounts?.oauth2) return resolve(true);
+      if (Date.now() - start > maxMs) return resolve(false);
+      setTimeout(poll, 150);
+    })();
+  });
 }
 
 async function fetchGoogleCalendarEvents() {
@@ -2101,7 +2184,8 @@ function googleEventToInternal(ev) {
   };
 }
 
-connectGoogleBtn?.addEventListener("click", () => {
+connectGoogleBtn?.addEventListener("click", async () => {
+  console.log("[google] connect button clicked");
   if (!GOOGLE_CLIENT_ID) {
     alert(
       "Google Calendar integration needs a one-time setup:\n\n" +
@@ -2115,14 +2199,26 @@ connectGoogleBtn?.addEventListener("click", () => {
     );
     return;
   }
-  if (!ensureGoogleClient()) {
-    setStatus("Google sign-in script still loading — try again in a second.", true);
-    return;
-  }
   if (getStoredGoogleToken()) {
     fetchGoogleCalendarEvents();
-  } else {
-    googleTokenClient.requestAccessToken({ prompt: "" });
+    return;
+  }
+  if (!ensureGoogleClient()) {
+    setStatus("Loading Google sign-in script…");
+    const ready = await waitForGoogleScript();
+    if (!ready || !ensureGoogleClient()) {
+      setStatus(
+        "Google sign-in script failed to load. Check that accounts.google.com is reachable and not blocked by an extension.",
+        true
+      );
+      return;
+    }
+  }
+  try {
+    googleTokenClient.requestAccessToken({ prompt: "consent" });
+  } catch (e) {
+    console.error("[google] requestAccessToken threw:", e);
+    setStatus("Could not start Google sign-in: " + e.message, true);
   }
 });
 
