@@ -606,21 +606,40 @@ function loadSessions() {
 function saveSessions(list) {
   try {
     localStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
+    return true;
   } catch (e) {
+    // Likely QuotaExceededError. Try shedding old samples to make room.
+    if (e?.name === "QuotaExceededError" || /quota/i.test(e?.message || "")) {
+      try {
+        const trimmed = list.map((s, i) => i === 0 ? s : { ...s, samples: [], cogSamples: [], blinkTimes: [] });
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed));
+        setStatus("Storage was full — older session detail discarded to keep today's report.", true);
+        return true;
+      } catch (e2) {
+        setStatus("Storage full: today's session could not be saved. Use 'Clear all' to free space. (" + e2.message + ")", true);
+        return false;
+      }
+    }
     setStatus("Unable to save to localStorage: " + e.message, true);
+    return false;
   }
 }
 
 function buildSessionSnapshot({ live = false } = {}) {
-  if (!state.startedAt || state.rateHistory.length === 0) return null;
+  if (!state.startedAt) return null;
   const endedAt = Date.now();
+  const durationMs = endedAt - state.startedAt;
+  // Drop only truly empty sessions (under a second AND no blinks AND no samples)
+  if (durationMs < 1000 && state.totalBlinks === 0 && state.rateHistory.length === 0) {
+    return null;
+  }
   const rates = state.rateHistory.map((p) => p.v);
   const avg = rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
   return {
     id: "s_" + state.startedAt,
     startedAt: state.startedAt,
     endedAt,
-    durationMs: endedAt - state.startedAt,
+    durationMs,
     totalBlinks: state.totalBlinks,
     avgRate: avg,
     samples: state.rateHistory.map((p, i) => ({
@@ -636,11 +655,21 @@ function buildSessionSnapshot({ live = false } = {}) {
 
 function persistCurrentSession() {
   const session = buildSessionSnapshot({ live: false });
-  if (!session) return null;
+  if (!session) {
+    console.warn("[persist] skipped — no session snapshot (startedAt or duration empty)");
+    return null;
+  }
   const sessions = loadSessions();
-  sessions.unshift(session);
-  while (sessions.length > MAX_STORED_SESSIONS) sessions.pop();
-  saveSessions(sessions);
+  // Replace any earlier snapshot of the same start so we don't keep duplicates
+  const filtered = sessions.filter(s => s.id !== session.id);
+  filtered.unshift(session);
+  while (filtered.length > MAX_STORED_SESSIONS) filtered.pop();
+  const ok = saveSessions(filtered);
+  if (!ok) {
+    console.error("[persist] saveSessions failed — today's session not stored");
+    return null;
+  }
+  console.log("[persist] saved session", session.id, "totalBlinks=", session.totalBlinks, "duration=", session.durationMs);
   return session;
 }
 
@@ -2091,8 +2120,20 @@ function ensureGoogleClient() {
     callback: handleGoogleToken,
     error_callback: handleGoogleError,
   });
+  console.log("[google] token client initialised");
   return true;
 }
+
+// Pre-initialise as soon as the GIS script becomes available so the click
+// handler can call requestAccessToken synchronously (popup blockers require
+// the call to happen in the same tick as the user gesture — no awaits).
+(function preloadGoogleClient() {
+  if (ensureGoogleClient()) return;
+  let attempts = 0;
+  const iv = setInterval(() => {
+    if (ensureGoogleClient() || ++attempts > 60) clearInterval(iv);
+  }, 200);
+})();
 
 function handleGoogleToken(resp) {
   if (resp.error) {
@@ -2184,7 +2225,7 @@ function googleEventToInternal(ev) {
   };
 }
 
-connectGoogleBtn?.addEventListener("click", async () => {
+connectGoogleBtn?.addEventListener("click", () => {
   console.log("[google] connect button clicked");
   if (!GOOGLE_CLIENT_ID) {
     alert(
@@ -2203,16 +2244,14 @@ connectGoogleBtn?.addEventListener("click", async () => {
     fetchGoogleCalendarEvents();
     return;
   }
+  // Synchronous path only — no awaits between the click and requestAccessToken,
+  // otherwise the browser pop-up blocker treats the popup as user-less.
   if (!ensureGoogleClient()) {
-    setStatus("Loading Google sign-in script…");
-    const ready = await waitForGoogleScript();
-    if (!ready || !ensureGoogleClient()) {
-      setStatus(
-        "Google sign-in script failed to load. Check that accounts.google.com is reachable and not blocked by an extension.",
-        true
-      );
-      return;
-    }
+    setStatus(
+      "Google sign-in script is still loading. Wait a moment and click again.",
+      true
+    );
+    return;
   }
   try {
     googleTokenClient.requestAccessToken({ prompt: "consent" });
