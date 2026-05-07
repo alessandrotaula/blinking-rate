@@ -85,6 +85,11 @@ const calStats = el("calStats");
 const calStatsBody = el("calStatsBody");
 const connectGoogleBtn = el("connectGoogleBtn");
 const connectGoogleLabel = el("connectGoogleLabel");
+const signInBtn = el("signInBtn");
+const signOutBtn = el("signOutBtn");
+const userBadge = el("userBadge");
+const userEmailEl = el("userEmail");
+const adminPill = el("adminPill");
 const connectWhoopBtn = el("connectWhoopBtn");
 const connectWhoopLabel = el("connectWhoopLabel");
 const reportPhysio = el("reportPhysio");
@@ -899,6 +904,11 @@ function whoopBaseline(records, field) {
 
 function renderPhysiologyBlock(session) {
   if (!reportPhysio) return;
+  // Hide for non-admin users — WHOOP is gated behind admin sign-in.
+  if (!authState.isAdmin) {
+    reportPhysio.hidden = true;
+    return;
+  }
   if (!isWhoopConnectedCached() && loadWhoopRecovery().length === 0) {
     reportPhysio.hidden = true;
     return;
@@ -2468,6 +2478,145 @@ if (getStoredGoogleToken()) {
 updateGoogleConnectButton();
 
 // ───────────────────────────────────────────────────────────────────────────
+// Auth — Google Sign-In + admin allowlist
+// Sign-in produces a Google ID token; the server verifies it and sets a
+// signed session cookie. Admin status (= visibility of WHOOP UI) is
+// determined by ADMIN_EMAILS in Vercel env vars.
+// ───────────────────────────────────────────────────────────────────────────
+
+const authState = { signedIn: false, isAdmin: false, email: null };
+
+function setAdminUiVisibility(isAdmin) {
+  document.querySelectorAll(".admin-only").forEach((el) => {
+    if (isAdmin) {
+      el.removeAttribute("hidden");
+    } else {
+      el.setAttribute("hidden", "");
+    }
+  });
+}
+
+function renderAuthUi() {
+  if (authState.signedIn) {
+    if (signInBtn) signInBtn.hidden = true;
+    if (userBadge) userBadge.hidden = false;
+    if (userEmailEl) userEmailEl.textContent = authState.email;
+    if (adminPill) adminPill.hidden = !authState.isAdmin;
+  } else {
+    if (signInBtn) signInBtn.hidden = false;
+    if (userBadge) userBadge.hidden = true;
+  }
+  setAdminUiVisibility(authState.isAdmin);
+}
+
+function ensureGsiId() {
+  if (!window.google?.accounts?.id) return false;
+  if (window.__gsiIdInited) return true;
+  window.google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleCredentialResponse,
+    auto_select: false,
+    cancel_on_tap_outside: true,
+  });
+  window.__gsiIdInited = true;
+  return true;
+}
+
+async function handleCredentialResponse(resp) {
+  if (!resp?.credential) {
+    setStatus("Sign-in failed: no credential.", true);
+    return;
+  }
+  try {
+    setStatus("Verifying sign-in…");
+    const r = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ id_token: resp.credential }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      setStatus(`Sign-in rejected: ${j.error || r.status}`, true);
+      return;
+    }
+    const j = await r.json();
+    authState.signedIn = true;
+    authState.email = j.email;
+    authState.isAdmin = !!j.isAdmin;
+    renderAuthUi();
+    setStatus(authState.isAdmin
+      ? `Signed in as ${authState.email} (admin).`
+      : `Signed in as ${authState.email}.`);
+    if (authState.isAdmin) {
+      checkWhoopStatus().then((ok) => {
+        if (ok && loadWhoopRecovery().length === 0) fetchWhoopRecovery();
+      });
+    }
+  } catch (e) {
+    setStatus("Sign-in error: " + e.message, true);
+  }
+}
+
+signInBtn?.addEventListener("click", async () => {
+  if (!GOOGLE_CLIENT_ID) {
+    setStatus("Sign-in disabled: GOOGLE_CLIENT_ID not configured.", true);
+    return;
+  }
+  // Wait briefly for GIS to load if needed.
+  let waited = 0;
+  while (!ensureGsiId() && waited < 4000) {
+    await new Promise((r) => setTimeout(r, 200));
+    waited += 200;
+  }
+  if (!ensureGsiId()) {
+    setStatus("Google Sign-In script failed to load.", true);
+    return;
+  }
+  try {
+    window.google.accounts.id.prompt((notification) => {
+      if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
+        const reason = notification.getNotDisplayedReason?.() || notification.getSkippedReason?.() || "unknown";
+        console.warn("[auth] sign-in prompt suppressed:", reason);
+        setStatus(
+          `Sign-in popup suppressed (${reason}). If this persists, try a different browser or disable strict tracking protection.`,
+          true
+        );
+      }
+    });
+  } catch (e) {
+    setStatus("Sign-in prompt error: " + e.message, true);
+  }
+});
+
+signOutBtn?.addEventListener("click", async () => {
+  try {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  } catch {}
+  authState.signedIn = false;
+  authState.isAdmin = false;
+  authState.email = null;
+  renderAuthUi();
+  // Also clear local WHOOP cached state so non-admins don't see stale data.
+  try { localStorage.removeItem("blinkWhoopRecovery.v1"); } catch {}
+  try { localStorage.removeItem("blinkWhoopConnected.v1"); } catch {}
+  setStatus("Signed out.");
+});
+
+async function bootstrapAuth() {
+  try {
+    const r = await fetch("/api/auth/me", { credentials: "same-origin" });
+    if (!r.ok) return;
+    const j = await r.json();
+    authState.signedIn = !!j.signedIn;
+    authState.isAdmin = !!j.isAdmin;
+    authState.email = j.email || null;
+  } catch {}
+  renderAuthUi();
+}
+bootstrapAuth();
+
+// ───────────────────────────────────────────────────────────────────────────
 // WHOOP integration — backend OAuth proxy at /api/whoop/*
 // Recovery records are cached locally so reports keep working offline.
 // ───────────────────────────────────────────────────────────────────────────
@@ -2623,6 +2772,14 @@ connectWhoopBtn?.addEventListener("click", async (e) => {
 })();
 
 updateWhoopButton();
-checkWhoopStatus().then((ok) => {
-  if (ok && loadWhoopRecovery().length === 0) fetchWhoopRecovery();
-});
+// WHOOP auto-fetch only happens for admins (handled in handleCredentialResponse
+// after sign-in, and below if the page already has a valid admin session cookie).
+(async () => {
+  // Wait briefly for bootstrapAuth() to settle so we know admin status.
+  for (let i = 0; i < 30 && authState.email === null && !authState.signedIn; i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (!authState.isAdmin) return;
+  const ok = await checkWhoopStatus();
+  if (ok && loadWhoopRecovery().length === 0) await fetchWhoopRecovery();
+})();
