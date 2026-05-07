@@ -15,8 +15,10 @@ export default async function handler(req, res) {
     res.setHeader("Location", url.toString());
     res.end();
   } catch (e) {
-    res.statusCode = 500;
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({ error: e.message }));
+    // Redirect home with a readable error so the user sees something instead
+    // of a raw 500 page.
+    res.statusCode = 302;
+    res.setHeader("Location", "/?whoop=error&detail=" + encodeURIComponent(e.message));
+    res.end();
   }
 }

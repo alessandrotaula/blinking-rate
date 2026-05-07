@@ -141,6 +141,18 @@ const state = {
   rateSlopeSession: 0,
 };
 
+// Surface any uncaught error visibly. Without this, a silent module-level
+// throw would prevent click handlers from being attached, making buttons
+// look unresponsive with no clue why.
+window.addEventListener("error", (ev) => {
+  console.error("[uncaught error]", ev.error || ev.message, ev.filename + ":" + ev.lineno);
+  try { setStatus("Script error: " + (ev.error?.message || ev.message), true); } catch {}
+});
+window.addEventListener("unhandledrejection", (ev) => {
+  console.error("[unhandled rejection]", ev.reason);
+  try { setStatus("Promise error: " + (ev.reason?.message || ev.reason), true); } catch {}
+});
+
 function setStatus(msg, isErr = false) {
   const textSpan = statusEl.querySelector("span:last-child");
   const pulseSpan = statusEl.querySelector(".pulse");
@@ -2551,15 +2563,39 @@ async function disconnectWhoop() {
 }
 
 connectWhoopBtn?.addEventListener("click", async (e) => {
-  if (e.shiftKey) {
+  console.log("[whoop] connect button clicked");
+  if (e.shiftKey && isWhoopConnectedCached()) {
     if (confirm("Disconnect WHOOP?")) await disconnectWhoop();
     return;
   }
   if (isWhoopConnectedCached()) {
+    setStatus("Refreshing WHOOP recovery…");
     await fetchWhoopRecovery();
     return;
   }
-  // Full-page redirect to OAuth start (Vercel proxy → WHOOP authorize)
+  // Probe the backend so we can show a useful message if the serverless
+  // functions aren't deployed or the env vars are missing.
+  setStatus("Checking WHOOP backend…");
+  connectWhoopBtn.disabled = true;
+  try {
+    const probe = await fetch("/api/whoop/status", { credentials: "same-origin" });
+    if (!probe.ok && probe.status !== 401) {
+      setStatus(
+        `WHOOP backend returned ${probe.status}. Set WHOOP_CLIENT_ID, WHOOP_CLIENT_SECRET, WHOOP_REDIRECT_URI in Vercel and redeploy.`,
+        true
+      );
+      return;
+    }
+  } catch (err) {
+    setStatus(
+      "Cannot reach /api/whoop/status. Either you're running this without the Vercel functions, or your deployment hasn't built. Open in DevTools → Network to see what fails.",
+      true
+    );
+    return;
+  } finally {
+    connectWhoopBtn.disabled = false;
+  }
+  // Backend is reachable — full-page redirect to OAuth start.
   window.location.href = "/api/whoop/start";
 });
 
