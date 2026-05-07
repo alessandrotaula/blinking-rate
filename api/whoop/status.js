@@ -1,10 +1,19 @@
-import { readCookies, getCookieNames } from "../_lib/whoop.js";
+function readCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie;
+  if (!raw) return out;
+  for (const part of raw.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (!k) continue;
+    out[k] = decodeURIComponent(rest.join("="));
+  }
+  return out;
+}
 
 export default async function handler(req, res) {
   const cookies = readCookies(req);
-  const { COOKIE_ACCESS, COOKIE_REFRESH, COOKIE_EXP } = getCookieNames();
-  const exp = cookies[COOKIE_EXP] ? parseInt(cookies[COOKIE_EXP], 10) : 0;
-  const connected = !!(cookies[COOKIE_ACCESS] && exp > Date.now()) || !!cookies[COOKIE_REFRESH];
+  const exp = cookies.whoop_exp ? parseInt(cookies.whoop_exp, 10) : 0;
+  const connected = !!(cookies.whoop_access && exp > Date.now()) || !!cookies.whoop_refresh;
   res.statusCode = 200;
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Cache-Control", "no-store");
