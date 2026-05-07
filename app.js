@@ -85,6 +85,13 @@ const calStats = el("calStats");
 const calStatsBody = el("calStatsBody");
 const connectGoogleBtn = el("connectGoogleBtn");
 const connectGoogleLabel = el("connectGoogleLabel");
+const connectWhoopBtn = el("connectWhoopBtn");
+const connectWhoopLabel = el("connectWhoopLabel");
+const reportPhysio = el("reportPhysio");
+const physioSub = el("physioSub");
+const physioKpis = el("physioKpis");
+const physioCorr = el("physioCorr");
+const physioNote = el("physioNote");
 let currentReportSession = null;
 
 const state = {
@@ -810,6 +817,183 @@ function dayKey(ts) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function pearson(xs, ys) {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return { r: NaN, n };
+  let sx = 0, sy = 0;
+  for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
+  const mx = sx / n, my = sy / n;
+  let num = 0, dx = 0, dy = 0;
+  for (let i = 0; i < n; i++) {
+    const ex = xs[i] - mx, ey = ys[i] - my;
+    num += ex * ey;
+    dx  += ex * ex;
+    dy  += ey * ey;
+  }
+  const denom = Math.sqrt(dx * dy);
+  if (denom < 1e-9) return { r: NaN, n };
+  return { r: num / denom, n };
+}
+
+function corrClass(r) {
+  if (!isFinite(r)) return "weak";
+  const a = Math.abs(r);
+  if (a < 0.2) return "weak";
+  if (r > 0)   return a >= 0.5 ? "pos-strong" : "pos-mod";
+  return a >= 0.5 ? "neg-strong" : "neg-mod";
+}
+
+function recoveryByDay() {
+  const map = new Map();
+  for (const r of loadWhoopRecovery()) map.set(r.date, r);
+  return map;
+}
+
+function sessionPhysiologyDataset() {
+  // Build (session, recovery) pairs across all stored sessions for the dates
+  // we have WHOOP data for. Used to compute cross-day correlations.
+  const byDay = recoveryByDay();
+  const sessions = loadSessions();
+  const rows = [];
+  for (const s of sessions) {
+    const k = dayKey(s.startedAt);
+    const rec = byDay.get(k);
+    if (!rec || rec.hrv_ms == null || rec.resting_hr == null) continue;
+    const samples = (s.samples || []);
+    const cog = (s.cogSamples || []);
+    if (samples.length === 0 && cog.length === 0) continue;
+    const fd = cog.length ? cog.reduce((a, c) => a + (c.fd ?? 0), 0) / cog.length : null;
+    const cf = cog.length ? cog.reduce((a, c) => a + (c.cf ?? 0), 0) / cog.length : null;
+    const sigma = samples.length ? stddev(samples.map(p => p.rate ?? p.v ?? 0)) : null;
+    rows.push({
+      day: k,
+      avgRate: s.avgRate ?? 0,
+      sigma,
+      fd, cf,
+      hrv: rec.hrv_ms,
+      rhr: rec.resting_hr,
+      recovery: rec.recovery_score,
+    });
+  }
+  return rows;
+}
+
+function whoopBaseline(records, field) {
+  const vals = records.map(r => r[field]).filter(v => v != null && isFinite(v));
+  if (!vals.length) return null;
+  vals.sort((a, b) => a - b);
+  return vals[Math.floor(vals.length / 2)];
+}
+
+function renderPhysiologyBlock(session) {
+  if (!reportPhysio) return;
+  if (!isWhoopConnectedCached() && loadWhoopRecovery().length === 0) {
+    reportPhysio.hidden = true;
+    return;
+  }
+  const records = loadWhoopRecovery();
+  if (records.length === 0) {
+    reportPhysio.hidden = true;
+    return;
+  }
+  reportPhysio.hidden = false;
+
+  const sessionDay = dayKey(session.startedAt);
+  const todayRec = records.find(r => r.date === sessionDay);
+  const hrvBaseline = whoopBaseline(records, "hrv_ms");
+  const rhrBaseline = whoopBaseline(records, "resting_hr");
+  const recBaseline = whoopBaseline(records, "recovery_score");
+
+  // Header subtitle
+  if (physioSub) {
+    physioSub.textContent = todayRec
+      ? `Recovery for ${sessionDay}`
+      : `No WHOOP data for ${sessionDay} — using baseline only`;
+  }
+
+  // KPI cards
+  const kpis = [];
+  const fmtDelta = (val, base, unit, betterHigh) => {
+    if (val == null || base == null) return "";
+    const d = val - base;
+    const dir = d > 0 ? "↑" : d < 0 ? "↓" : "→";
+    const tone = (d > 0 && betterHigh) || (d < 0 && !betterHigh) ? "good" : "warn";
+    const pct = base ? Math.round((d / base) * 100) : 0;
+    return `<div class="physio-kpi-sub" data-tone="${tone}">${dir} ${Math.abs(pct)}% vs ${base.toFixed(0)} ${unit} baseline</div>`;
+  };
+  if (todayRec) {
+    if (todayRec.hrv_ms != null) {
+      kpis.push(`
+        <div class="physio-kpi">
+          <div class="physio-kpi-label">HRV (RMSSD)</div>
+          <div class="physio-kpi-value">${todayRec.hrv_ms.toFixed(0)}<span class="physio-kpi-unit">ms</span></div>
+          ${fmtDelta(todayRec.hrv_ms, hrvBaseline, "ms", true)}
+        </div>`);
+    }
+    if (todayRec.resting_hr != null) {
+      kpis.push(`
+        <div class="physio-kpi">
+          <div class="physio-kpi-label">Resting HR</div>
+          <div class="physio-kpi-value">${todayRec.resting_hr.toFixed(0)}<span class="physio-kpi-unit">bpm</span></div>
+          ${fmtDelta(todayRec.resting_hr, rhrBaseline, "bpm", false)}
+        </div>`);
+    }
+    if (todayRec.recovery_score != null) {
+      kpis.push(`
+        <div class="physio-kpi">
+          <div class="physio-kpi-label">Recovery</div>
+          <div class="physio-kpi-value">${todayRec.recovery_score.toFixed(0)}<span class="physio-kpi-unit">/100</span></div>
+          ${fmtDelta(todayRec.recovery_score, recBaseline, "%", true)}
+        </div>`);
+    }
+  }
+  if (!kpis.length && hrvBaseline != null) {
+    kpis.push(`
+      <div class="physio-kpi">
+        <div class="physio-kpi-label">HRV baseline</div>
+        <div class="physio-kpi-value">${hrvBaseline.toFixed(0)}<span class="physio-kpi-unit">ms</span></div>
+      </div>`);
+  }
+  physioKpis.innerHTML = kpis.join("");
+
+  // Cross-day correlations
+  const ds = sessionPhysiologyDataset();
+  const pairs = [
+    ["Blink rate", "HRV",      ds.map(d => d.avgRate),  ds.map(d => d.hrv)],
+    ["Blink rate", "Resting HR", ds.map(d => d.avgRate), ds.map(d => d.rhr)],
+    ["Blink rate", "Recovery",  ds.map(d => d.avgRate),  ds.map(d => d.recovery)],
+    ["Focus Depth", "HRV",      ds.filter(d => d.fd != null).map(d => d.fd), ds.filter(d => d.fd != null).map(d => d.hrv)],
+    ["Focus Depth", "Recovery", ds.filter(d => d.fd != null).map(d => d.fd), ds.filter(d => d.fd != null).map(d => d.recovery)],
+    ["Cog Fatigue", "HRV",      ds.filter(d => d.cf != null).map(d => d.cf), ds.filter(d => d.cf != null).map(d => d.hrv)],
+    ["Cog Fatigue", "Recovery", ds.filter(d => d.cf != null).map(d => d.cf), ds.filter(d => d.cf != null).map(d => d.recovery)],
+  ];
+  const rows = pairs
+    .map(([a, b, xs, ys]) => ({ a, b, ...pearson(xs, ys) }))
+    .filter(p => isFinite(p.r));
+
+  if (rows.length === 0) {
+    physioCorr.innerHTML = "";
+    physioNote.textContent = ds.length < 3
+      ? `Need at least 3 sessions on days with WHOOP data to compute correlations (have ${ds.length}).`
+      : "No usable correlations yet.";
+  } else {
+    physioCorr.innerHTML = rows.map(p => `
+      <div class="physio-corr-row">
+        <span class="physio-corr-pair">${p.a} ↔ ${p.b}</span>
+        <span class="physio-corr-r ${corrClass(p.r)}">r = ${p.r.toFixed(2)} <small style="opacity:0.6">(n=${p.n})</small></span>
+      </div>
+    `).join("");
+    const strong = rows.filter(p => Math.abs(p.r) >= 0.5);
+    if (strong.length) {
+      const top = strong.sort((a, b) => Math.abs(b.r) - Math.abs(a.r))[0];
+      const dir = top.r > 0 ? "rises" : "falls";
+      physioNote.textContent = `Strongest pattern across ${top.n} session-days: ${top.a} ${dir} when ${top.b} increases (r = ${top.r.toFixed(2)}).`;
+    } else {
+      physioNote.textContent = `Correlations across ${ds.length} session-days are weak (|r| < 0.5). Need more sessions across varied recovery states for clearer patterns.`;
+    }
+  }
+}
+
 function fmtDayLabel(ts) {
   const day = startOfDay(ts);
   const today = startOfDay(Date.now());
@@ -1195,6 +1379,8 @@ function generateReport(session, opts = {}) {
     analysisCards.push(buildCogInsufficientCard());
   }
   reportAnalysis.innerHTML = analysisCards.join("");
+
+  renderPhysiologyBlock(session);
 
   reportSection.hidden = false;
   reportSection.dataset.mode = isLive ? "live" : "final";
@@ -2268,3 +2454,139 @@ if (getStoredGoogleToken()) {
   });
 }
 updateGoogleConnectButton();
+
+// ───────────────────────────────────────────────────────────────────────────
+// WHOOP integration — backend OAuth proxy at /api/whoop/*
+// Recovery records are cached locally so reports keep working offline.
+// ───────────────────────────────────────────────────────────────────────────
+
+const WHOOP_RECOVERY_KEY = "blinkWhoopRecovery.v1";
+const WHOOP_STATUS_KEY = "blinkWhoopConnected.v1";
+
+function loadWhoopRecovery() {
+  try {
+    const raw = localStorage.getItem(WHOOP_RECOVERY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+function saveWhoopRecovery(records) {
+  try { localStorage.setItem(WHOOP_RECOVERY_KEY, JSON.stringify(records)); } catch {}
+}
+
+function isWhoopConnectedCached() {
+  return localStorage.getItem(WHOOP_STATUS_KEY) === "1";
+}
+
+function setWhoopConnectedCached(v) {
+  if (v) localStorage.setItem(WHOOP_STATUS_KEY, "1");
+  else localStorage.removeItem(WHOOP_STATUS_KEY);
+}
+
+function updateWhoopButton() {
+  if (!connectWhoopBtn) return;
+  const connected = isWhoopConnectedCached();
+  connectWhoopBtn.dataset.connected = connected ? "true" : "false";
+  if (connectWhoopLabel) {
+    connectWhoopLabel.textContent = connected ? "Refresh WHOOP" : "Connect WHOOP";
+  }
+}
+
+async function checkWhoopStatus() {
+  try {
+    const r = await fetch("/api/whoop/status", { credentials: "same-origin" });
+    if (!r.ok) return false;
+    const j = await r.json();
+    setWhoopConnectedCached(!!j.connected);
+    updateWhoopButton();
+    return !!j.connected;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchWhoopRecovery() {
+  const startISO = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString();
+  const endISO = new Date().toISOString();
+  setStatus("Fetching WHOOP recovery data…");
+  try {
+    const r = await fetch(
+      `/api/whoop/recovery?start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}`,
+      { credentials: "same-origin" }
+    );
+    if (r.status === 401) {
+      setWhoopConnectedCached(false);
+      updateWhoopButton();
+      setStatus("WHOOP session expired — click Connect again.", true);
+      return;
+    }
+    if (!r.ok) {
+      const text = await r.text();
+      throw new Error(`HTTP ${r.status}: ${text.slice(0, 200)}`);
+    }
+    const j = await r.json();
+    const records = j.records || [];
+    // dedupe by date, keep last seen
+    const map = new Map();
+    for (const old of loadWhoopRecovery()) map.set(old.date, old);
+    for (const rec of records) map.set(rec.date, rec);
+    const merged = [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+    saveWhoopRecovery(merged);
+    setStatus(`Synced ${records.length} WHOOP recovery record(s).`);
+    if (currentReportSession) renderPhysiologyBlock(currentReportSession);
+  } catch (e) {
+    setStatus("WHOOP fetch failed: " + e.message, true);
+  }
+}
+
+async function disconnectWhoop() {
+  try {
+    await fetch("/api/whoop/disconnect", { method: "POST", credentials: "same-origin" });
+  } catch {}
+  setWhoopConnectedCached(false);
+  updateWhoopButton();
+  setStatus("Disconnected from WHOOP.");
+}
+
+connectWhoopBtn?.addEventListener("click", async (e) => {
+  if (e.shiftKey) {
+    if (confirm("Disconnect WHOOP?")) await disconnectWhoop();
+    return;
+  }
+  if (isWhoopConnectedCached()) {
+    await fetchWhoopRecovery();
+    return;
+  }
+  // Full-page redirect to OAuth start (Vercel proxy → WHOOP authorize)
+  window.location.href = "/api/whoop/start";
+});
+
+// Handle the redirect-back from /api/whoop/callback (?whoop=connected | error)
+(function handleWhoopRedirect() {
+  const params = new URLSearchParams(location.search);
+  const w = params.get("whoop");
+  if (!w) return;
+  // Strip the param from the URL bar
+  params.delete("whoop");
+  const detail = params.get("detail");
+  params.delete("detail");
+  const newSearch = params.toString();
+  history.replaceState({}, "", location.pathname + (newSearch ? "?" + newSearch : ""));
+  if (w === "connected") {
+    setWhoopConnectedCached(true);
+    updateWhoopButton();
+    setStatus("WHOOP connected — fetching recovery…");
+    fetchWhoopRecovery();
+  } else if (w === "error") {
+    setWhoopConnectedCached(false);
+    updateWhoopButton();
+    setStatus("WHOOP connect failed: " + (detail || "unknown"), true);
+  }
+})();
+
+updateWhoopButton();
+checkWhoopStatus().then((ok) => {
+  if (ok && loadWhoopRecovery().length === 0) fetchWhoopRecovery();
+});

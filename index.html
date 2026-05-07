@@ -225,6 +225,16 @@
       </div>
 
       <div id="reportAnalysis" class="report-analysis"></div>
+
+      <div id="reportPhysio" class="report-physio" hidden>
+        <div class="physio-header">
+          <span class="physio-title">Physiology — WHOOP</span>
+          <span id="physioSub" class="physio-sub"></span>
+        </div>
+        <div id="physioKpis" class="physio-kpis"></div>
+        <div id="physioCorr" class="physio-corr"></div>
+        <p id="physioNote" class="physio-note"></p>
+      </div>
     </section>
 
     <!-- ── Calendar & classification ── -->
@@ -243,6 +253,10 @@
               <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 5.48 0 2.45 2.02.96 4.96l3 2.33C4.67 5.16 6.66 3.58 9 3.58z"/>
             </svg>
             <span id="connectGoogleLabel">Connect Google Calendar</span>
+          </button>
+          <button id="connectWhoopBtn" type="button" class="cal-whoop" data-connected="false">
+            <span class="whoop-mark" aria-hidden="true">W</span>
+            <span id="connectWhoopLabel">Connect WHOOP</span>
           </button>
           <button id="clearEventsBtn" type="button" class="danger">Clear events</button>
         </div>

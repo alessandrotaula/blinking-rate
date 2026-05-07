@@ -935,3 +935,87 @@ button.danger:hover { background: rgba(255,154,169,0.10); border-color: rgba(255
 }
 .cal-google .g-logo { width: 16px; height: 16px; flex-shrink: 0; }
 .cal-google[data-connected="true"] .g-logo { opacity: 0.7; }
+
+/* WHOOP connect button */
+.cal-whoop {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px 7px 8px; border-radius: 999px; font: inherit; font-size: 13px;
+  cursor: pointer;
+  background: #0a0a0a; color: #f5f5f5;
+  border: 1px solid rgba(255,255,255,0.12);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.cal-whoop:hover { background: #1a1a1a; }
+.cal-whoop[data-connected="true"] {
+  background: linear-gradient(135deg, rgba(255,82,82,0.28), rgba(255,140,140,0.18));
+  border: 1px solid rgba(255,82,82,0.45);
+  color: var(--dn-fg-1);
+}
+.cal-whoop[data-connected="true"]:hover {
+  background: linear-gradient(135deg, rgba(255,82,82,0.4), rgba(255,140,140,0.25));
+}
+.cal-whoop .whoop-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #ff4d4d; color: #fff;
+  font-weight: 700; font-size: 11px; letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.cal-whoop[data-connected="true"] .whoop-mark { opacity: 0.9; }
+
+/* Physiology block in report */
+.report-physio {
+  margin-top: 22px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255,82,82,0.06), rgba(127,185,139,0.06));
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.physio-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+}
+.physio-title {
+  font-size: 14px; font-weight: 600; color: var(--dn-fg-1); letter-spacing: -0.005em;
+}
+.physio-sub { font-size: 12px; color: var(--dn-fg-3); }
+.physio-kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px; margin-bottom: 14px;
+}
+.physio-kpi {
+  padding: 10px 12px; border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.physio-kpi-label {
+  font-size: 11px; color: var(--dn-fg-3); margin-bottom: 4px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.physio-kpi-value {
+  font-size: 22px; font-weight: 600; color: var(--dn-fg-1);
+  font-variant-numeric: tabular-nums;
+}
+.physio-kpi-unit { font-size: 12px; color: var(--dn-fg-3); margin-left: 3px; }
+.physio-kpi-sub { font-size: 11px; color: var(--dn-fg-2); margin-top: 2px; }
+.physio-corr {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px; margin-bottom: 10px;
+}
+.physio-corr-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  font-size: 12px;
+}
+.physio-corr-pair { color: var(--dn-fg-2); }
+.physio-corr-r {
+  font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.physio-corr-r.pos-strong { color: #7fb98b; }
+.physio-corr-r.pos-mod    { color: #a8d8b0; }
+.physio-corr-r.neg-strong { color: #ff8b8b; }
+.physio-corr-r.neg-mod    { color: #ffb0b0; }
+.physio-corr-r.weak       { color: var(--dn-fg-3); }
+.physio-note { font-size: 12px; color: var(--dn-fg-3); margin: 4px 0 0; }
