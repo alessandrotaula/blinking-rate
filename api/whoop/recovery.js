@@ -1,7 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
-const WHOOP_API_BASE  = "https://api.prod.whoop.com/developer/v1";
+// Try v2 first, fall back to v1. WHOOP migrated to v2 in 2025; v1 may
+// still serve some accounts. Whichever returns 200 wins for the request.
+const WHOOP_API_BASES = [
+  "https://api.prod.whoop.com/developer/v2",
+  "https://api.prod.whoop.com/developer/v1",
+];
 const WHOOP_SCOPES    = "read:recovery read:cycles read:sleep offline";
 
 function b64urlDecode(s) {
@@ -118,16 +123,16 @@ export default async function handler(req, res) {
     const start = url.searchParams.get("start");
     const end   = url.searchParams.get("end");
 
-    const items = [];
-    let nextToken = null;
-    let pages = 0;
-    do {
-      const apiUrl = new URL(`${WHOOP_API_BASE}/recovery`);
+    // Pick a working API base. Probe v2 then v1 with the first request.
+    let apiBase = null;
+    let firstJson = null;
+    let firstNextToken = null;
+    let lastError = null;
+    for (const base of WHOOP_API_BASES) {
+      const apiUrl = new URL(`${base}/recovery`);
       if (start) apiUrl.searchParams.set("start", start);
       if (end)   apiUrl.searchParams.set("end", end);
       apiUrl.searchParams.set("limit", "25");
-      if (nextToken) apiUrl.searchParams.set("nextToken", nextToken);
-
       const r = await fetch(apiUrl.toString(), {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -138,35 +143,72 @@ export default async function handler(req, res) {
         res.end(JSON.stringify({ error: "session_expired" }));
         return;
       }
-      if (!r.ok) {
-        const text = await r.text();
-        res.statusCode = r.status;
+      if (r.ok) {
+        apiBase = base;
+        firstJson = await r.json();
+        firstNextToken = firstJson.next_token || null;
+        break;
+      }
+      const text = await r.text();
+      lastError = { base, status: r.status, detail: text.slice(0, 200) };
+    }
+    if (!apiBase) {
+      res.statusCode = lastError?.status || 502;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({
+        error: "whoop_api",
+        tried: WHOOP_API_BASES,
+        last: lastError,
+        hint: "WHOOP API didn't recognise /recovery on either v2 or v1 — your account may need a different scope set or endpoint path.",
+      }));
+      return;
+    }
+
+    const items = [...(firstJson.records || [])];
+    let nextToken = firstNextToken;
+    let pages = 1;
+    while (nextToken && pages < 10) {
+      const apiUrl = new URL(`${apiBase}/recovery`);
+      if (start) apiUrl.searchParams.set("start", start);
+      if (end)   apiUrl.searchParams.set("end", end);
+      apiUrl.searchParams.set("limit", "25");
+      apiUrl.searchParams.set("nextToken", nextToken);
+      const r = await fetch(apiUrl.toString(), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.status === 401) {
+        clearSessionCookies(res);
+        res.statusCode = 401;
         res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ error: "whoop_api", status: r.status, detail: text.slice(0, 500) }));
+        res.end(JSON.stringify({ error: "session_expired" }));
         return;
       }
+      if (!r.ok) break;
       const json = await r.json();
       items.push(...(json.records || []));
       nextToken = json.next_token || null;
       pages++;
-    } while (nextToken && pages < 10);
+    }
 
-    const simplified = items.map(rec => ({
-      cycle_id: rec.cycle_id,
-      date: rec.created_at?.slice(0, 10) || null,
-      created_at: rec.created_at,
-      updated_at: rec.updated_at,
-      score_state: rec.score_state,
-      hrv_ms: rec.score?.hrv_rmssd_milli ?? null,
-      resting_hr: rec.score?.resting_heart_rate ?? null,
-      recovery_score: rec.score?.recovery_score ?? null,
-      user_calibrating: rec.score?.user_calibrating ?? false,
-    })).filter(r => r.date);
+    const simplified = items.map(rec => {
+      const sc = rec.score || {};
+      return {
+        cycle_id: rec.cycle_id != null ? String(rec.cycle_id) : null,
+        date: rec.created_at?.slice(0, 10) || null,
+        created_at: rec.created_at,
+        updated_at: rec.updated_at,
+        score_state: rec.score_state,
+        hrv_ms: sc.hrv_rmssd_milli ?? sc.heart_rate_variability_rmssd_milli ?? null,
+        resting_hr: sc.resting_heart_rate ?? null,
+        recovery_score: sc.recovery_score ?? null,
+        user_calibrating: sc.user_calibrating ?? false,
+      };
+    }).filter(r => r.date);
 
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Cache-Control", "no-store");
-    res.end(JSON.stringify({ records: simplified }));
+    res.end(JSON.stringify({ records: simplified, api_version: apiBase.endsWith("/v2") ? "v2" : "v1" }));
   } catch (e) {
     res.statusCode = 500;
     res.setHeader("Content-Type", "application/json");
