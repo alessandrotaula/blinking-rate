@@ -904,11 +904,6 @@ function whoopBaseline(records, field) {
 
 function renderPhysiologyBlock(session) {
   if (!reportPhysio) return;
-  // Hide for non-admin users — WHOOP is gated behind admin sign-in.
-  if (!authState.isAdmin) {
-    reportPhysio.hidden = true;
-    return;
-  }
   if (!isWhoopConnectedCached() && loadWhoopRecovery().length === 0) {
     reportPhysio.hidden = true;
     return;
@@ -2545,14 +2540,7 @@ async function handleCredentialResponse(resp) {
     authState.email = j.email;
     authState.isAdmin = !!j.isAdmin;
     renderAuthUi();
-    setStatus(authState.isAdmin
-      ? `Signed in as ${authState.email} (admin).`
-      : `Signed in as ${authState.email}.`);
-    if (authState.isAdmin) {
-      checkWhoopStatus().then((ok) => {
-        if (ok && loadWhoopRecovery().length === 0) fetchWhoopRecovery();
-      });
-    }
+    setStatus(`Signed in as ${authState.email}.`);
   } catch (e) {
     setStatus("Sign-in error: " + e.message, true);
   }
@@ -2772,14 +2760,6 @@ connectWhoopBtn?.addEventListener("click", async (e) => {
 })();
 
 updateWhoopButton();
-// WHOOP auto-fetch only happens for admins (handled in handleCredentialResponse
-// after sign-in, and below if the page already has a valid admin session cookie).
-(async () => {
-  // Wait briefly for bootstrapAuth() to settle so we know admin status.
-  for (let i = 0; i < 30 && authState.email === null && !authState.signedIn; i++) {
-    await new Promise(r => setTimeout(r, 100));
-  }
-  if (!authState.isAdmin) return;
-  const ok = await checkWhoopStatus();
-  if (ok && loadWhoopRecovery().length === 0) await fetchWhoopRecovery();
-})();
+checkWhoopStatus().then((ok) => {
+  if (ok && loadWhoopRecovery().length === 0) fetchWhoopRecovery();
+});

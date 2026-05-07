@@ -1,5 +1,3 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
 // Try v2 first, fall back to v1. WHOOP migrated to v2 in 2025; v1 may
 // still serve some accounts. Whichever returns 200 wins for the request.
@@ -8,34 +6,6 @@ const WHOOP_API_BASES = [
   "https://api.prod.whoop.com/developer/v1",
 ];
 const WHOOP_SCOPES    = "read:recovery read:cycles read:sleep offline";
-
-function b64urlDecode(s) {
-  s = s.replace(/-/g, "+").replace(/_/g, "/");
-  while (s.length % 4) s += "=";
-  return Buffer.from(s, "base64").toString();
-}
-
-function verifyAdmin(req) {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) return null;
-  const cookies = readCookies(req);
-  const token = cookies.bra_auth;
-  if (!token || !token.includes(".")) return null;
-  const [payloadB64, sigB64] = token.split(".");
-  const expected = createHmac("sha256", secret).update(payloadB64).digest();
-  let given;
-  try { given = Buffer.from(sigB64.replace(/-/g, "+").replace(/_/g, "/"), "base64"); }
-  catch { return null; }
-  if (given.length !== expected.length) return null;
-  if (!timingSafeEqual(given, expected)) return null;
-  let payload;
-  try { payload = JSON.parse(b64urlDecode(payloadB64)); }
-  catch { return null; }
-  if (!payload?.email || !payload?.exp || payload.exp < Date.now()) return null;
-  const admins = (process.env.ADMIN_EMAILS || "")
-    .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-  return admins.includes(payload.email) ? payload.email : null;
-}
 
 function readCookies(req) {
   const out = {};
@@ -106,11 +76,6 @@ async function getValidAccessToken(req, res) {
 
 export default async function handler(req, res) {
   try {
-    if (!verifyAdmin(req)) {
-      res.statusCode = 403;
-      res.setHeader("Content-Type", "application/json");
-      return res.end(JSON.stringify({ error: "forbidden_not_admin" }));
-    }
     const token = await getValidAccessToken(req, res);
     if (!token) {
       res.statusCode = 401;
