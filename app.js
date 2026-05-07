@@ -2105,15 +2105,15 @@ function renderCalendarEvents() {
   }
 
   const now = Date.now();
-  const buckets = { today: [], yesterday: [], past7: [], past30: [] };
+  const buckets = Object.fromEntries(BUCKET_DEFS.map(d => [d.id, []]));
   for (const ev of events) {
     const k = bucketEvent(ev.start, now);
-    if (k) buckets[k].push(ev);
+    if (k && buckets[k]) buckets[k].push(ev);
   }
 
   let total = 0;
   for (const def of BUCKET_DEFS) {
-    const list = buckets[def.id];
+    const list = buckets[def.id] || [];
     if (!list.length) continue;
     total += list.length;
     const details = document.createElement("details");
