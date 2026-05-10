@@ -13,8 +13,20 @@ const BLINK_LOW = 0.25;
 const MIN_BLINK_GAP_MS = 120;
 const RATE_WINDOW_MS = 60_000;
 const SAMPLE_INTERVAL_MS = 500;
-const NO_BLINK_ALERT_MS = 90 * 1000;
+const NO_BLINK_ALERT_DEFAULT_MS = 90 * 1000;
 const NO_BLINK_ALERT_GRACE_MS = 30 * 1000;
+const BLINK_ALERT_KEY = "blinkAlertThresholdMs.v1";
+
+function loadBlinkAlertThreshold() {
+  const raw = localStorage.getItem(BLINK_ALERT_KEY);
+  if (raw == null) return NO_BLINK_ALERT_DEFAULT_MS;
+  const v = parseInt(raw, 10);
+  return Number.isFinite(v) && v >= 0 ? v : NO_BLINK_ALERT_DEFAULT_MS;
+}
+
+function saveBlinkAlertThreshold(ms) {
+  try { localStorage.setItem(BLINK_ALERT_KEY, String(ms)); } catch {}
+}
 const VAR_WINDOW_SAMPLES = 30;
 const CHART_WINDOW_MS = 120_000;
 const UI_ROLLING_MS = 5 * 60_000;
@@ -53,6 +65,7 @@ const exportBtn = el("exportBtn");
 const clearBtn = el("clearBtn");
 const previewChk = el("previewChk");
 const autoPauseChk = el("autoPauseChk");
+const blinkAlertSelect = el("blinkAlertSelect");
 const videoWrap = el("videoWrap");
 const video = el("video");
 const pipCanvas = el("pipCanvas");
@@ -325,6 +338,8 @@ function sample() {
 
 function checkNoBlinkAlert(now) {
   if (!state.startedAt) return;
+  const thresholdMs = state.blinkAlertThresholdMs;
+  if (!thresholdMs || thresholdMs <= 0) return; // user disabled the alert
   const sinceStart = now - state.startedAt;
   if (sinceStart < NO_BLINK_ALERT_GRACE_MS) return;
   if (state.lastResumedAt && now - state.lastResumedAt < NO_BLINK_ALERT_GRACE_MS) return;
@@ -334,7 +349,7 @@ function checkNoBlinkAlert(now) {
     : state.startedAt;
   const sinceBlink = now - lastBlinkEpoch;
 
-  if (sinceBlink < NO_BLINK_ALERT_MS) {
+  if (sinceBlink < thresholdMs) {
     if (state.noBlinkAlertedAt && lastBlinkEpoch > state.noBlinkAlertedAt) {
       state.noBlinkAlertedAt = 0;
     }
@@ -1243,6 +1258,21 @@ autoPauseChk.addEventListener("change", () => {
     setPulse("live", "Live");
   }
 });
+
+// Blink alert threshold — restore from storage and live-update on change
+state.blinkAlertThresholdMs = loadBlinkAlertThreshold();
+if (blinkAlertSelect) {
+  blinkAlertSelect.value = String(state.blinkAlertThresholdMs);
+  blinkAlertSelect.addEventListener("change", () => {
+    const v = parseInt(blinkAlertSelect.value, 10) || 0;
+    state.blinkAlertThresholdMs = v;
+    saveBlinkAlertThreshold(v);
+    state.noBlinkAlertedAt = 0; // re-arm on threshold change
+    setStatus(v === 0
+      ? "Blink alert disabled."
+      : `Blink alert set to ${v / 1000} s.`);
+  });
+}
 toggleBtn.addEventListener("click", () => {
   if (toggleBtn.dataset.state === "running") {
     stop();

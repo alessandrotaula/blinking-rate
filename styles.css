@@ -263,6 +263,20 @@ main {
   cursor: pointer;
 }
 .preview-toggle:first-of-type { margin-left: auto; }
+.threshold-toggle select {
+  appearance: none; -webkit-appearance: none;
+  background: rgba(255,255,255,0.08); color: var(--dn-fg-1);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 999px; padding: 4px 26px 4px 10px;
+  font: inherit; font-size: 12px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dn-fg-2) 50%),
+                    linear-gradient(135deg, var(--dn-fg-2) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.threshold-toggle select:hover { background-color: rgba(255,255,255,0.12); }
+.threshold-toggle select:focus { outline: 1px solid var(--dn-rose); }
 
 /* ── Stat strip ── */
 .stats {

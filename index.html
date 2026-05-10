@@ -92,6 +92,17 @@
         <input type="checkbox" id="previewChk" />
         Show video
       </label>
+      <label class="preview-toggle threshold-toggle">
+        <span>Blink alert after</span>
+        <select id="blinkAlertSelect" aria-label="No-blink alert threshold">
+          <option value="0">Off</option>
+          <option value="45000">45 s</option>
+          <option value="60000">60 s</option>
+          <option value="75000">75 s</option>
+          <option value="90000" selected>90 s</option>
+          <option value="105000">105 s</option>
+        </select>
+      </label>
     </section>
 
     <section class="video-wrap" id="videoWrap" hidden>
