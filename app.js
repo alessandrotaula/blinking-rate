@@ -75,6 +75,8 @@ const sessionRateVal = el("sessionRateVal");
 const varVal = el("varVal");
 const totalVal = el("totalVal");
 const sessionVal = el("sessionVal");
+const switchVal = el("switchVal");
+const switchHint = el("switchHint");
 const statusEl = el("status");
 const sessionList = el("sessionList");
 const pulseEl = el("pulse");
@@ -90,6 +92,8 @@ const repFdAvg = el("repFdAvg");
 const repCfAvg = el("repCfAvg");
 const repFdTrend = el("repFdTrend");
 const repCfTrend = el("repCfTrend");
+const repSwitches = el("repSwitches");
+const repSwitchRate = el("repSwitchRate");
 const reportAnalysis = el("reportAnalysis");
 const exportReportBtn = el("exportReportBtn");
 const calEventList = el("calEventList");
@@ -157,6 +161,11 @@ const state = {
   ibiCv3m: 0.55,
   ibiP903m: 6,
   rateSlopeSession: 0,
+  // desktop context-switch tracking (window/tab focus loss)
+  contextSwitches: 0,
+  switchEvents: [],
+  awaySince: 0,
+  totalAwayMs: 0,
 };
 
 // Surface any uncaught error visibly. Without this, a silent module-level
@@ -434,6 +443,14 @@ function updateUI() {
   varVal.textContent = varSession.toFixed(2);
   totalVal.textContent = String(state.totalBlinks);
   sessionVal.textContent = fmtTime(activeMs) + (state.paused ? " · paused" : "");
+  if (switchVal) {
+    const switchesPerHr = activeMin > 0 ? state.contextSwitches / (activeMin / 60) : 0;
+    switchVal.textContent = switchesPerHr.toFixed(1);
+    if (switchHint) {
+      const awaySec = Math.round((state.totalAwayMs + (state.awaySince ? now - state.awaySince : 0)) / 1000);
+      switchHint.textContent = `${state.contextSwitches} switch${state.contextSwitches === 1 ? "" : "es"} · ${fmtTime(awaySec * 1000)} away`;
+    }
+  }
   drawChart();
   drawPipCanvas(rate5m);
 
@@ -688,6 +705,9 @@ function buildSessionSnapshot({ live = false } = {}) {
     })),
     cogSamples: state.cogHistory.slice(),
     blinkTimes: state.blinkTimes.slice(),
+    contextSwitches: state.contextSwitches,
+    totalAwayMs: state.totalAwayMs + (state.awaySince ? endedAt - state.awaySince : 0),
+    switchEvents: state.switchEvents.slice(),
     live,
   };
 }
@@ -757,7 +777,17 @@ function reportToCSV(s) {
     lines.push(`# cognitive_samples_usable,${cs.count}`);
     lines.push(`# note,insufficient_cognitive_data`);
   }
+  lines.push(`# context_switches,${s.contextSwitches || 0}`);
+  lines.push(`# time_away_seconds,${((s.totalAwayMs || 0) / 1000).toFixed(1)}`);
   lines.push("");
+  if ((s.switchEvents || []).length) {
+    lines.push("# ----- Context switches (focus losses) -----");
+    lines.push("timestamp_iso,epoch_ms,away_seconds");
+    for (const ev of s.switchEvents) {
+      lines.push(`${new Date(ev.t).toISOString()},${ev.t},${((ev.awayMs || 0) / 1000).toFixed(1)}`);
+    }
+    lines.push("");
+  }
   lines.push("# ----- Rate time series (per sample) -----");
   lines.push("timestamp_iso,epoch_ms,rate_per_min,variation_sigma");
   for (const p of s.samples) {
@@ -810,7 +840,7 @@ function exportAllSessions() {
     return;
   }
   const lines = [
-    "session_id,day,started_at,ended_at,duration_seconds,total_blinks,avg_rate_per_min,class,event_label",
+    "session_id,day,started_at,ended_at,duration_seconds,total_blinks,avg_rate_per_min,context_switches,time_away_seconds,class,event_label",
   ];
   for (const s of sessions) {
     const cls = s.tag?.class || "";
@@ -823,6 +853,8 @@ function exportAllSessions() {
       (s.durationMs / 1000).toFixed(1),
       s.totalBlinks,
       s.avgRate.toFixed(3),
+      s.contextSwitches || 0,
+      ((s.totalAwayMs || 0) / 1000).toFixed(1),
       cls,
       lbl,
     ].join(","));
@@ -1058,6 +1090,8 @@ function aggregateDay(group) {
   const cogSamples = sessions.flatMap(s => s.cogSamples || []).sort((a, b) => a.t - b.t);
   const totalBlinks = sessions.reduce((a, s) => a + (s.totalBlinks || 0), 0);
   const durationMs = sessions.reduce((a, s) => a + (s.durationMs || 0), 0);
+  const contextSwitches = sessions.reduce((a, s) => a + (s.contextSwitches || 0), 0);
+  const totalAwayMs = sessions.reduce((a, s) => a + (s.totalAwayMs || 0), 0);
   const startedAt = sessions[0]?.startedAt || group.dayStart;
   const endedAt = sessions[sessions.length - 1]?.endedAt || (startedAt + durationMs);
   const avgRate = samples.length ? samples.reduce((a, p) => a + p.rate, 0) / samples.length : 0;
@@ -1066,6 +1100,7 @@ function aggregateDay(group) {
     dayKey: group.key,
     startedAt, endedAt, durationMs, totalBlinks, avgRate,
     samples, cogSamples,
+    contextSwitches, totalAwayMs,
     sessionCount: sessions.length,
     childIds: sessions.map(s => s.id),
     aggregated: true,
@@ -1162,6 +1197,10 @@ async function start() {
   state.faceBackFirstSeenAt = 0;
   state.pauseStartedAt = 0;
   state.totalPausedMs = 0;
+  state.contextSwitches = 0;
+  state.switchEvents = [];
+  state.awaySince = 0;
+  state.totalAwayMs = 0;
   // reset cognitive state
   state.cogB_session = null;
   state.cogB_session_ready = false;
@@ -1289,7 +1328,30 @@ document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && state.wakeLock === null && wakeBtn.getAttribute("aria-pressed") === "true") {
     try { state.wakeLock = await navigator.wakeLock.request("screen"); } catch {}
   }
+  if (document.hidden) markContextAway(); else markContextBack();
 });
+
+// Context switching — a browser page can't read OS window titles, but it can
+// reliably detect when it loses focus (tab switch, alt-tab to another app,
+// minimise). Each focus-loss during a running session counts as one context
+// switch; we also accumulate time spent away.
+function markContextAway() {
+  if (!state.tickWorker) return;         // only while a session is actively running
+  if (state.awaySince) return;           // already away — don't double-count
+  state.awaySince = Date.now();
+  state.contextSwitches++;
+}
+
+function markContextBack() {
+  if (!state.awaySince) return;
+  const awayMs = Date.now() - state.awaySince;
+  state.totalAwayMs += awayMs;
+  state.switchEvents.push({ t: state.awaySince, awayMs });
+  state.awaySince = 0;
+}
+
+window.addEventListener("blur", markContextAway);
+window.addEventListener("focus", markContextBack);
 
 window.addEventListener("beforeunload", () => {
   if (state.startedAt && state.rateHistory.length > 0 && state.tickWorker) {
@@ -1405,6 +1467,15 @@ function generateReport(session, opts = {}) {
     repCfAvg.textContent = "—";
     repFdTrend.textContent = "insufficient data";
     repCfTrend.textContent = "insufficient data";
+  }
+
+  if (repSwitches) {
+    const switches = session.contextSwitches || 0;
+    const durMin = (session.durationMs || 0) / 60000;
+    const perHr = durMin > 0 ? switches / (durMin / 60) : 0;
+    repSwitches.textContent = String(switches);
+    const awayTxt = session.totalAwayMs ? ` · ${fmtTime(session.totalAwayMs)} away` : "";
+    repSwitchRate.textContent = `${perHr.toFixed(1)}/hr${awayTxt}`;
   }
 
   const peakIdx   = rates.indexOf(maxRate);

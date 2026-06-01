@@ -281,11 +281,11 @@ main {
 /* ── Stat strip ── */
 .stats {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 14px;
   margin-bottom: 20px;
 }
-@media (max-width: 1100px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1300px) { .stats { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 700px)  { .stats { grid-template-columns: repeat(2, 1fr); } }
 
 .stat {
